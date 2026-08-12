@@ -1,0 +1,1451 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Calcolatore RAL → Netto</title>
+<!-- Dipendenze pinnate: @babel/standalone 8 usa di default il runtime JSX automatico,
+     che emette import ES da "react/jsx-runtime" e non funziona in uno <script> classico.
+     La 7.x usa il runtime classic (React.createElement) ed è quella che serve qui. -->
+<script src="https://cdn.tailwindcss.com/3.4.16"></script>
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+</head>
+<body class="bg-slate-100 text-slate-900">
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+/* =============================================================================
+   JET HR — PROTOTIPO CALCOLO RAL → NETTO
+   =============================================================================
+   Il file è diviso in tre sezioni nettamente separate:
+
+     (A) TAX_CONFIG   — configurazione fiscale/contributiva per anno. Solo dati.
+                        Ogni costante ha il riferimento normativo o la fonte.
+     (B) ENGINE       — motore di calcolo puro. Nessun side effect, nessun accesso
+                        al DOM, nessuna dipendenza dalla UI. Testabile in isolamento
+                        (esposto su window.JetHR per poterlo usare da console/Node).
+     (C) UI           — componenti React. Legge solo l'output del motore.
+
+   Caso modellato: impiegato, tempo indeterminato, residente a Milano (Lombardia),
+   nessun carico familiare, nessuna agevolazione, rapporto per l'intero anno (365 gg).
+============================================================================= */
+
+
+/* =============================================================================
+   (A) CONFIGURAZIONE FISCALE PER ANNO
+   -----------------------------------------------------------------------------
+   Regola: nessun numero magico nel motore. Tutto ciò che è normativo vive qui.
+   `verificare: true` marca i valori che NON ho potuto confermare su fonte primaria
+   e che vanno controllati prima di qualunque uso reale (vedi pannello "Da verificare").
+============================================================================= */
+
+const TAX_CONFIG = {
+
+  2026: {
+    anno: 2026,
+    etichetta: "2026",
+
+    // -------------------------------------------------------------------------
+    // Contribuzione previdenziale
+    // -------------------------------------------------------------------------
+    inps: {
+      // Aliquota IVS a carico del lavoratore dipendente (settore privato,
+      // impiegato). L'aliquota IVS complessiva è 33%: 23,81% datore + 9,19%
+      // lavoratore.
+      aliquotaDipendente: 0.0919,
+      fonteAliquotaDipendente: "Aliquota IVS c/lavoratore, tabelle contributive INPS (settore privato, impiegati)",
+
+      // Contributo aggiuntivo dell'1% (art. 3-ter L. 438/1992) sulla quota di
+      // retribuzione eccedente il limite della prima fascia di retribuzione
+      // pensionabile.
+      aliquotaAggiuntiva: 0.01,
+      primaFasciaPensionabile: 56224, // € — Circolare INPS n. 6 del 30/01/2026
+      fontePrimaFascia: "Circolare INPS n. 6 del 30/01/2026 — prima fascia di retribuzione pensionabile 2026",
+
+      // Massimale annuo della base contributiva e pensionabile
+      // (art. 2 c. 18 L. 335/1995). ATTENZIONE: si applica ai soli iscritti
+      // privi di anzianità contributiva al 31/12/1995.
+      massimaleAnnuo: 122295, // € — Circolare INPS n. 6 del 30/01/2026
+      fonteMassimale: "Circolare INPS n. 6 del 30/01/2026 — massimale annuo base contributiva 2026",
+
+      // Contribuzione a carico del datore di lavoro. Varia sensibilmente per
+      // CCNL, dimensione aziendale, qualifica. Default: terziario/commercio
+      // con meno di 50 dipendenti (38,17% totale − 9,19% lavoratore = 28,98%).
+      aliquotaDatore: 0.2898,
+      fonteAliquotaDatore: "Aliquota contributiva complessiva 38,17% (terziario/commercio < 50 dipendenti), al netto del 9,19% c/lavoratore",
+      verificaAliquotaDatore: true,
+
+      // Premio INAIL: dipende dalla voce di tariffa della PAT aziendale.
+      // Per impiegato amministrativo il tasso è tipicamente molto basso.
+      aliquotaInail: 0.004,
+      fonteInail: "Tasso medio ipotizzato per impiegato amministrativo — dipende dalla voce di tariffa INAIL della singola PAT",
+      verificaInail: true,
+    },
+
+    // -------------------------------------------------------------------------
+    // TFR
+    // -------------------------------------------------------------------------
+    tfr: {
+      divisore: 13.5,                 // art. 2120 c.c. — quota annua = retribuzione / 13,5
+      contributoFondoGaranzia: 0.005, // 0,50% dell'imponibile previdenziale, a riduzione della quota accantonata
+      fonte: "art. 2120 c.c. (quota = retribuzione utile / 13,5); contributo 0,50% al Fondo di garanzia INPS (art. 3 L. 297/1982)",
+    },
+
+    // -------------------------------------------------------------------------
+    // IRPEF — scaglioni e aliquote
+    // Legge di Bilancio 2026 (L. 199/2025, art. 1 c. 3): seconda aliquota
+    // ridotta dal 35% al 33%.
+    // -------------------------------------------------------------------------
+    irpef: {
+      scaglioni: [
+        { fino: 28000,    aliquota: 0.23 },
+        { fino: 50000,    aliquota: 0.33 },
+        { fino: Infinity, aliquota: 0.43 },
+      ],
+      fonte: "art. 11 TUIR come modificato dalla L. 199/2025 (Legge di Bilancio 2026), art. 1 c. 3",
+      // TODO: la L. 199/2025 neutralizza il beneficio del taglio al 33% per i
+      // redditi complessivi oltre 200.000 € tramite riduzione delle detrazioni
+      // spettanti. Non implementato: fuori dal caso base.
+      sogliaNeutralizzazioneBeneficio: 200000,
+    },
+
+    // -------------------------------------------------------------------------
+    // Detrazione per redditi di lavoro dipendente — art. 13 c. 1 TUIR
+    // Formule decrescenti, non aliquota fissa.
+    // -------------------------------------------------------------------------
+    detrazioneLavoroDipendente: {
+      fasce: [
+        {
+          fino: 15000,
+          formula: (R) => 1955,
+          descrizione: "Importo fisso 1.955 €",
+          espressione: "1.955",
+        },
+        {
+          fino: 28000,
+          formula: (R) => 1910 + 1190 * ((28000 - R) / 13000),
+          descrizione: "Decrescente da 3.100 € a 1.910 €",
+          espressione: "1.910 + 1.190 × (28.000 − R) / 13.000",
+        },
+        {
+          fino: 50000,
+          formula: (R) => 1910 * ((50000 - R) / 22000),
+          descrizione: "Decrescente da 1.910 € fino ad azzerarsi a 50.000 €",
+          espressione: "1.910 × (50.000 − R) / 22.000",
+        },
+        {
+          fino: Infinity,
+          formula: (R) => 0,
+          descrizione: "Nessuna detrazione oltre 50.000 €",
+          espressione: "0",
+        },
+      ],
+      // Detrazione minima garantita per rapporti a tempo indeterminato
+      // (non rileva nel caso base a rapporto annuale intero, ma la teniamo in config).
+      minimoTempoIndeterminato: 690,
+      fonte: "art. 13 c. 1 TUIR, importi come modificati dal D.Lgs. 216/2023",
+
+      // Maggiorazione di 65 € — art. 13 c. 1-bis TUIR
+      maggiorazione: {
+        importo: 65,
+        da: 25000,
+        a: 35000,
+        fonte: "art. 13 c. 1-bis TUIR — maggiorazione 65 € per redditi complessivi da 25.000 a 35.000 €",
+        verificare: true,
+      },
+    },
+
+    // -------------------------------------------------------------------------
+    // Somma integrativa (ex "bonus") per redditi fino a 20.000 €
+    // L. 207/2024 art. 1 cc. 4-5, confermata per il 2026.
+    // Somma NON imponibile: non riduce l'imposta, si aggiunge al netto.
+    // -------------------------------------------------------------------------
+    sommaIntegrativa: {
+      sogliaRedditoComplessivo: 20000,
+      fasce: [
+        { fino: 8500,  percentuale: 0.071 },
+        { fino: 15000, percentuale: 0.053 },
+        { fino: 20000, percentuale: 0.048 },
+      ],
+      fonte: "L. 207/2024 art. 1 cc. 4-5 (taglio strutturale del cuneo fiscale), confermata per il 2026",
+      // NB: la percentuale si applica al reddito di lavoro dipendente;
+      // la soglia di accesso guarda al reddito complessivo.
+    },
+
+    // -------------------------------------------------------------------------
+    // Ulteriore detrazione per redditi 20.000 – 40.000 €
+    // L. 207/2024 art. 1 c. 6, confermata per il 2026.
+    // -------------------------------------------------------------------------
+    ulterioreDetrazione: {
+      fasce: [
+        { da: 20000, a: 32000, formula: () => 1000,                                  espressione: "1.000" },
+        { da: 32000, a: 40000, formula: (R) => 1000 * ((40000 - R) / 8000),          espressione: "1.000 × (40.000 − R) / 8.000" },
+      ],
+      fonte: "L. 207/2024 art. 1 c. 6, confermata per il 2026",
+    },
+
+    // -------------------------------------------------------------------------
+    // Trattamento integrativo (ex "bonus Renzi") — D.L. 3/2020 art. 1
+    // -------------------------------------------------------------------------
+    trattamentoIntegrativo: {
+      importoMassimo: 1200,
+      sogliaPiena: 15000,      // reddito complessivo entro cui spetta l'importo pieno
+      sogliaMassima: 28000,    // oltre la quale non spetta nulla
+      abbattimentoCapienza: 75, // la detrazione art. 13 è ridotta di 75 € nel test di capienza
+      fonte: "D.L. 3/2020 art. 1, come modificato dal D.Lgs. 216/2023 e successive conferme",
+    },
+
+    // -------------------------------------------------------------------------
+    // Addizionale regionale IRPEF — Lombardia
+    // Applicazione per scaglioni progressivi sul reddito imponibile IRPEF.
+    // -------------------------------------------------------------------------
+    addizionaleRegionale: {
+      regione: "Lombardia",
+      scaglioni: [
+        { fino: 15000,    aliquota: 0.0123 },
+        { fino: 28000,    aliquota: 0.0158 },
+        { fino: 50000,    aliquota: 0.0172 },
+        { fino: Infinity, aliquota: 0.0173 },
+      ],
+      fonte: "Aliquote addizionale regionale Lombardia (Portale del federalismo fiscale MEF)",
+      verificare: true,
+    },
+
+    // -------------------------------------------------------------------------
+    // Addizionale comunale IRPEF — Milano
+    // Aliquota unica; soglia di esenzione che opera come cliff (non franchigia):
+    // superata la soglia, l'aliquota si applica sull'intero imponibile.
+    // -------------------------------------------------------------------------
+    addizionaleComunale: {
+      comune: "Milano",
+      aliquota: 0.008,
+      sogliaEsenzione: 23000,
+      esenzioneCliff: true,
+      fonte: "Delibera comunale Milano — aliquota 0,80%, esenzione fino a 23.000 € di imponibile",
+      verificare: true,
+    },
+  },
+
+  // ---------------------------------------------------------------------------
+  // 2025 — anno precedente, utile per confrontare l'effetto del taglio IRPEF.
+  // I parametri INPS 2025 sono ricostruiti e NON verificati su circolare.
+  // ---------------------------------------------------------------------------
+  2025: {
+    anno: 2025,
+    etichetta: "2025",
+    inps: {
+      aliquotaDipendente: 0.0919,
+      fonteAliquotaDipendente: "Aliquota IVS c/lavoratore, tabelle contributive INPS",
+      aliquotaAggiuntiva: 0.01,
+      primaFasciaPensionabile: 55008,
+      fontePrimaFascia: "Prima fascia di retribuzione pensionabile 2025 (circolare INPS annuale)",
+      verificaPrimaFascia: true,
+      massimaleAnnuo: 120607,
+      fonteMassimale: "Massimale annuo base contributiva 2025 (circolare INPS annuale)",
+      verificaMassimale: true,
+      aliquotaDatore: 0.2898,
+      fonteAliquotaDatore: "Terziario/commercio < 50 dipendenti",
+      verificaAliquotaDatore: true,
+      aliquotaInail: 0.004,
+      fonteInail: "Tasso medio ipotizzato per impiegato amministrativo",
+      verificaInail: true,
+    },
+    tfr: {
+      divisore: 13.5,
+      contributoFondoGaranzia: 0.005,
+      fonte: "art. 2120 c.c.; contributo 0,50% Fondo di garanzia INPS",
+    },
+    irpef: {
+      scaglioni: [
+        { fino: 28000,    aliquota: 0.23 },
+        { fino: 50000,    aliquota: 0.35 },
+        { fino: Infinity, aliquota: 0.43 },
+      ],
+      fonte: "art. 11 TUIR, testo vigente nel 2025 (tre scaglioni 23/35/43)",
+      sogliaNeutralizzazioneBeneficio: Infinity,
+    },
+    detrazioneLavoroDipendente: {
+      fasce: [
+        { fino: 15000,    formula: (R) => 1955,                                  descrizione: "Importo fisso 1.955 €", espressione: "1.955" },
+        { fino: 28000,    formula: (R) => 1910 + 1190 * ((28000 - R) / 13000),   descrizione: "Decrescente",           espressione: "1.910 + 1.190 × (28.000 − R) / 13.000" },
+        { fino: 50000,    formula: (R) => 1910 * ((50000 - R) / 22000),          descrizione: "Decrescente",           espressione: "1.910 × (50.000 − R) / 22.000" },
+        { fino: Infinity, formula: (R) => 0,                                     descrizione: "Nessuna detrazione",    espressione: "0" },
+      ],
+      minimoTempoIndeterminato: 690,
+      fonte: "art. 13 c. 1 TUIR, importi D.Lgs. 216/2023",
+      maggiorazione: { importo: 65, da: 25000, a: 35000, fonte: "art. 13 c. 1-bis TUIR", verificare: true },
+    },
+    sommaIntegrativa: {
+      sogliaRedditoComplessivo: 20000,
+      fasce: [
+        { fino: 8500,  percentuale: 0.071 },
+        { fino: 15000, percentuale: 0.053 },
+        { fino: 20000, percentuale: 0.048 },
+      ],
+      fonte: "L. 207/2024 art. 1 cc. 4-5",
+    },
+    ulterioreDetrazione: {
+      fasce: [
+        { da: 20000, a: 32000, formula: () => 1000,                         espressione: "1.000" },
+        { da: 32000, a: 40000, formula: (R) => 1000 * ((40000 - R) / 8000), espressione: "1.000 × (40.000 − R) / 8.000" },
+      ],
+      fonte: "L. 207/2024 art. 1 c. 6",
+    },
+    trattamentoIntegrativo: {
+      importoMassimo: 1200, sogliaPiena: 15000, sogliaMassima: 28000, abbattimentoCapienza: 75,
+      fonte: "D.L. 3/2020 art. 1",
+    },
+    addizionaleRegionale: {
+      regione: "Lombardia",
+      scaglioni: [
+        { fino: 15000,    aliquota: 0.0123 },
+        { fino: 28000,    aliquota: 0.0158 },
+        { fino: 50000,    aliquota: 0.0172 },
+        { fino: Infinity, aliquota: 0.0173 },
+      ],
+      fonte: "Aliquote addizionale regionale Lombardia (MEF)",
+      verificare: true,
+    },
+    addizionaleComunale: {
+      comune: "Milano", aliquota: 0.008, sogliaEsenzione: 23000, esenzioneCliff: true,
+      fonte: "Delibera comunale Milano", verificare: true,
+    },
+  },
+};
+
+
+/* =============================================================================
+   (B) MOTORE DI CALCOLO — funzioni pure
+   -----------------------------------------------------------------------------
+   Convenzione: tutti gli importi sono in euro, in doppia precisione, SENZA
+   arrotondamenti intermedi. L'arrotondamento è responsabilità della UI.
+   (In un cedolino reale l'IRPEF si arrotonda all'unità di euro ad ogni periodo
+   di paga: vedi TODO in fondo.)
+============================================================================= */
+
+/**
+ * Applica una scala per scaglioni progressivi a un imponibile.
+ * Restituisce il totale e il dettaglio scaglione per scaglione.
+ */
+function applicaScaglioni(imponibile, scaglioni) {
+  let residuo = Math.max(0, imponibile);
+  let precedente = 0;
+  let totale = 0;
+  const dettaglio = [];
+
+  for (const s of scaglioni) {
+    if (residuo <= 0) break;
+    const ampiezza = s.fino - precedente;
+    const quota = Math.min(residuo, ampiezza);
+    const imposta = quota * s.aliquota;
+    dettaglio.push({
+      da: precedente,
+      a: s.fino,
+      aliquota: s.aliquota,
+      imponibileNelloScaglione: quota,
+      imposta,
+    });
+    totale += imposta;
+    residuo -= quota;
+    precedente = s.fino;
+  }
+  return { totale, dettaglio };
+}
+
+/**
+ * Contributi previdenziali a carico del dipendente.
+ * Base = RAL, limitata al massimale annuo.
+ * Aliquota base + 1% sulla quota eccedente la prima fascia pensionabile.
+ */
+function calcolaContributiDipendente(ral, cfg) {
+  const c = cfg.inps;
+
+  // TODO: l'imponibile previdenziale è assunto pari alla RAL. In un cedolino reale
+  // differisce dall'imponibile fiscale: vanno escluse alcune indennità e inclusi i
+  // fringe benefit oltre soglia. Per farlo bene servirebbe la scomposizione della
+  // retribuzione per voce, con il flag di imponibilità previdenziale di ciascuna.
+
+  // TODO: il massimale è applicato a chiunque, ma per legge riguarda i soli iscritti
+  // privi di anzianità contributiva al 31/12/1995. Per farlo bene serve la data di
+  // prima iscrizione del lavoratore come input.
+  const baseContributiva = Math.min(ral, c.massimaleAnnuo);
+
+  const quotaBase = baseContributiva * c.aliquotaDipendente;
+
+  const eccedenzaPrimaFascia = Math.max(0, baseContributiva - c.primaFasciaPensionabile);
+  const quotaAggiuntiva = eccedenzaPrimaFascia * c.aliquotaAggiuntiva;
+
+  return {
+    baseContributiva,
+    quotaBase,
+    eccedenzaPrimaFascia,
+    quotaAggiuntiva,
+    totale: quotaBase + quotaAggiuntiva,
+    massimaleApplicato: ral > c.massimaleAnnuo,
+  };
+}
+
+/**
+ * Contributi a carico del datore + accantonamento TFR → costo azienda.
+ */
+function calcolaCostoAzienda(ral, cfg) {
+  const c = cfg.inps;
+  const baseContributiva = Math.min(ral, c.massimaleAnnuo);
+
+  const contributiInpsDatore = baseContributiva * c.aliquotaDatore;
+  const premioInail = ral * c.aliquotaInail;
+
+  // TODO: manca la rivalutazione annua del TFR già accantonato (1,5% + 75%
+  // dell'indice ISTAT) e la relativa imposta sostitutiva del 17%. Per farlo bene
+  // servirebbe lo stock di TFR pregresso e la serie storica dell'indice ISTAT:
+  // qui si calcola la sola quota di competenza dell'anno.
+  const quotaTfrLorda = ral / cfg.tfr.divisore;
+  const contributoFondoGaranzia = ral * cfg.tfr.contributoFondoGaranzia;
+  const accantonamentoTfr = quotaTfrLorda - contributoFondoGaranzia;
+
+  const contributiDatore = contributiInpsDatore + premioInail;
+
+  return {
+    contributiInpsDatore,
+    premioInail,
+    contributiDatore,
+    quotaTfrLorda,
+    contributoFondoGaranzia,
+    accantonamentoTfr,
+    costoTotale: ral + contributiDatore + accantonamentoTfr,
+  };
+}
+
+/**
+ * Detrazione per redditi di lavoro dipendente (art. 13 TUIR) + maggiorazione 65 €.
+ * `giorniLavorati` è tenuto come parametro esplicito: nel caso base è 365.
+ */
+function calcolaDetrazioneLavoro(redditoComplessivo, cfg, giorniLavorati = 365) {
+  const d = cfg.detrazioneLavoroDipendente;
+  const fascia = d.fasce.find((f) => redditoComplessivo <= f.fino);
+
+  const teorica = Math.max(0, fascia.formula(redditoComplessivo));
+  // Ragguaglio ai giorni di lavoro nell'anno (nel caso base = 1).
+  const ragguagliata = teorica * (giorniLavorati / 365);
+
+  const m = d.maggiorazione;
+  const spettaMaggiorazione =
+    redditoComplessivo > m.da && redditoComplessivo <= m.a;
+  const maggiorazione = spettaMaggiorazione ? m.importo : 0;
+
+  return {
+    fascia,
+    teorica,
+    ragguagliata,
+    maggiorazione,
+    totale: ragguagliata + maggiorazione,
+  };
+}
+
+/**
+ * Ulteriore detrazione "cuneo fiscale" per redditi 20.000 – 40.000 €.
+ */
+function calcolaUlterioreDetrazione(redditoComplessivo, cfg) {
+  const fascia = cfg.ulterioreDetrazione.fasce.find(
+    (f) => redditoComplessivo > f.da && redditoComplessivo <= f.a
+  );
+  if (!fascia) return { spetta: false, importo: 0, fascia: null };
+  return {
+    spetta: true,
+    importo: Math.max(0, fascia.formula(redditoComplessivo)),
+    fascia,
+  };
+}
+
+/**
+ * Somma integrativa non imponibile per redditi fino a 20.000 €.
+ * Non riduce l'imposta: si somma direttamente al netto.
+ */
+function calcolaSommaIntegrativa(redditoComplessivo, redditoLavoroDipendente, cfg) {
+  const s = cfg.sommaIntegrativa;
+  if (redditoComplessivo > s.sogliaRedditoComplessivo) {
+    return { spetta: false, importo: 0, percentuale: 0 };
+  }
+  const fascia = s.fasce.find((f) => redditoLavoroDipendente <= f.fino);
+  if (!fascia) return { spetta: false, importo: 0, percentuale: 0 };
+  return {
+    spetta: true,
+    percentuale: fascia.percentuale,
+    importo: redditoLavoroDipendente * fascia.percentuale,
+    fascia,
+  };
+}
+
+/**
+ * Trattamento integrativo (ex bonus Renzi), con test di capienza.
+ *
+ * SEMPLIFICAZIONE: nella fascia 15.000–28.000 la norma confronta l'imposta lorda
+ * con la SOMMA di più detrazioni (art. 12, 13, 15 per oneri specifici, rate di
+ * detrazione per ristrutturazioni...). Qui consideriamo la sola detrazione da
+ * lavoro dipendente, coerentemente con il caso base "nessun carico familiare,
+ * nessun onere detraibile".
+ */
+function calcolaTrattamentoIntegrativo(redditoComplessivo, impostaLorda, detrazioneLavoro, cfg) {
+  const t = cfg.trattamentoIntegrativo;
+
+  if (redditoComplessivo > t.sogliaMassima) {
+    return { spetta: false, importo: 0, motivo: `Reddito complessivo oltre ${t.sogliaMassima} €` };
+  }
+
+  if (redditoComplessivo <= t.sogliaPiena) {
+    // Spetta l'importo pieno solo se c'è capienza: imposta lorda > detrazione − 75 €.
+    const sogliaCapienza = detrazioneLavoro - t.abbattimentoCapienza;
+    if (impostaLorda > sogliaCapienza) {
+      return {
+        spetta: true,
+        importo: t.importoMassimo,
+        motivo: `Imposta lorda (${impostaLorda.toFixed(2)}) > detrazione − 75 € (${sogliaCapienza.toFixed(2)})`,
+      };
+    }
+    return {
+      spetta: false,
+      importo: 0,
+      motivo: `Incapienza: imposta lorda (${impostaLorda.toFixed(2)}) ≤ detrazione − 75 € (${sogliaCapienza.toFixed(2)})`,
+    };
+  }
+
+  // Fascia 15.000 – 28.000: spetta la differenza tra detrazioni e imposta lorda,
+  // nel limite di 1.200 €.
+  const differenza = detrazioneLavoro - impostaLorda;
+  if (differenza > 0) {
+    return {
+      spetta: true,
+      importo: Math.min(t.importoMassimo, differenza),
+      motivo: `Detrazioni (${detrazioneLavoro.toFixed(2)}) > imposta lorda (${impostaLorda.toFixed(2)})`,
+    };
+  }
+  return {
+    spetta: false,
+    importo: 0,
+    motivo: `Detrazioni (${detrazioneLavoro.toFixed(2)}) ≤ imposta lorda (${impostaLorda.toFixed(2)})`,
+  };
+}
+
+/**
+ * Addizionale comunale: la soglia di esenzione di Milano opera come cliff,
+ * non come franchigia.
+ */
+function calcolaAddizionaleComunale(imponibile, cfg) {
+  const a = cfg.addizionaleComunale;
+  if (imponibile <= a.sogliaEsenzione) {
+    return { importo: 0, esente: true, baseApplicata: 0 };
+  }
+  const base = a.esenzioneCliff ? imponibile : imponibile - a.sogliaEsenzione;
+  return { importo: base * a.aliquota, esente: false, baseApplicata: base };
+}
+
+/**
+ * FUNZIONE PRINCIPALE.
+ * Input: RAL, numero mensilità, configurazione dell'anno.
+ * Output: breakdown completo con ogni voce intermedia.
+ */
+function calcolaNetto({ ral, mensilita = 13, config, giorniLavorati = 365 }) {
+  const cfg = config;
+
+  // --- 1. Costo azienda ------------------------------------------------------
+  const costoAzienda = calcolaCostoAzienda(ral, cfg);
+
+  // --- 2/3. Contributi c/dipendente -----------------------------------------
+  const contributi = calcolaContributiDipendente(ral, cfg);
+
+  // --- 4. Imponibile fiscale -------------------------------------------------
+  // I contributi obbligatori sono oneri deducibili (art. 10 TUIR); per il
+  // dipendente operano già in busta paga abbattendo l'imponibile.
+  // TODO: l'imponibile fiscale ignora fringe benefit oltre soglia, welfare aziendale,
+  // premi di risultato a tassazione sostitutiva e contributi a previdenza complementare
+  // (deducibili entro plafond). Per farlo bene serve la scomposizione della retribuzione
+  // per voce con il regime fiscale di ciascuna.
+  const imponibileFiscale = ral - contributi.totale;
+
+  // Nel caso base (unica fonte di reddito) reddito complessivo = imponibile.
+  // TODO: il reddito complessivo che governa detrazioni, bonus e soglie dovrebbe
+  // includere gli altri redditi del contribuente (altri rapporti di lavoro, redditi
+  // di capitale, rendita catastale dell'abitazione principale con la relativa
+  // deduzione). Con un solo datore di lavoro il sostituto d'imposta non li conosce:
+  // per farlo bene serve un input dichiarativo del lavoratore.
+  const redditoComplessivo = imponibileFiscale;
+  const redditoLavoroDipendente = imponibileFiscale;
+
+  // --- 5. IRPEF lorda --------------------------------------------------------
+  const irpefLorda = applicaScaglioni(imponibileFiscale, cfg.irpef.scaglioni);
+
+  // --- 6. Detrazioni da lavoro dipendente ------------------------------------
+  const detrazioneLavoro = calcolaDetrazioneLavoro(redditoComplessivo, cfg, giorniLavorati);
+
+  // --- 7a. Ulteriore detrazione (cuneo) --------------------------------------
+  const ulteriore = calcolaUlterioreDetrazione(redditoComplessivo, cfg);
+
+  // TODO: mancano le detrazioni per carichi di famiglia (art. 12 TUIR) e per oneri
+  // (art. 15). Per farle bene servono composizione del nucleo familiare, redditi dei
+  // familiari e oneri documentati: sono l'estensione più richiesta e la prima da
+  // aggiungere dopo il caso base.
+
+  // Le detrazioni non possono generare credito: sono limitate alla capienza.
+  const detrazioniTotaliTeoriche = detrazioneLavoro.totale + ulteriore.importo;
+  const detrazioniUtilizzate = Math.min(irpefLorda.totale, detrazioniTotaliTeoriche);
+  const detrazioniPerse = detrazioniTotaliTeoriche - detrazioniUtilizzate;
+
+  const irpefNetta = Math.max(0, irpefLorda.totale - detrazioniTotaliTeoriche);
+
+  // --- 7b. Trattamento integrativo ------------------------------------------
+  const trattamentoIntegrativo = calcolaTrattamentoIntegrativo(
+    redditoComplessivo,
+    irpefLorda.totale,
+    detrazioneLavoro.totale,
+    cfg
+  );
+
+  // --- 7c. Somma integrativa (redditi fino a 20.000) -------------------------
+  const sommaIntegrativa = calcolaSommaIntegrativa(
+    redditoComplessivo,
+    redditoLavoroDipendente,
+    cfg
+  );
+
+  // --- 8. Addizionali --------------------------------------------------------
+  // Le addizionali sono dovute solo se per lo stesso anno risulta dovuta l'IRPEF.
+  // TODO: qui sono imputate per competenza. In busta paga il saldo dell'anno N si
+  // trattiene in 11 rate nell'anno N+1 e l'addizionale comunale prevede un acconto
+  // del 30% sull'anno in corso. Per farlo bene serve un modello di cassa mese per
+  // mese, che è anche l'unico modo per riprodurre il netto di una singola busta paga.
+  const addizionaliDovute = irpefNetta > 0;
+
+  const addRegionaleCalc = applicaScaglioni(imponibileFiscale, cfg.addizionaleRegionale.scaglioni);
+  const addRegionale = addizionaliDovute ? addRegionaleCalc.totale : 0;
+
+  const addComunaleCalc = calcolaAddizionaleComunale(imponibileFiscale, cfg);
+  const addComunale = addizionaliDovute ? addComunaleCalc.importo : 0;
+
+  // --- 9. Netto --------------------------------------------------------------
+  const totaleImposte = irpefNetta + addRegionale + addComunale;
+  const totaleTrattenute = contributi.totale + totaleImposte;
+  const bonusNetti = trattamentoIntegrativo.importo + sommaIntegrativa.importo;
+
+  const nettoAnnuo = ral - totaleTrattenute + bonusNetti;
+
+  // TODO: il netto mensile è la media annua. Il cedolino reale varia di mese in mese
+  // (13ª e 14ª non scontano le detrazioni allo stesso modo, le addizionali si
+  // trattengono in rate, il conguaglio di dicembre riallinea tutto). Per farlo bene
+  // serve il calcolo per periodo di paga con arrotondamento all'unità di euro e
+  // conguaglio finale.
+  const nettoMensile = nettoAnnuo / mensilita;
+
+  const aliquotaMediaEffettiva = ral > 0 ? (totaleTrattenute - bonusNetti) / ral : 0;
+  const cuneoFiscale =
+    costoAzienda.costoTotale > 0
+      ? (costoAzienda.costoTotale - nettoAnnuo) / costoAzienda.costoTotale
+      : 0;
+
+  // --- Breakdown per la UI: catena dall'alto verso il basso -------------------
+  const steps = [
+    {
+      id: "costo-azienda",
+      label: "Costo azienda",
+      tipo: "totale",
+      importo: costoAzienda.costoTotale,
+      base: "RAL + contributi c/azienda + accantonamento TFR",
+      formula: `${fmt(ral)} + ${fmt(costoAzienda.contributiDatore)} + ${fmt(costoAzienda.accantonamentoTfr)}`,
+      riferimento: "Somma degli oneri complessivi sostenuti dal datore di lavoro",
+      soloCostoAzienda: true,
+    },
+    {
+      id: "contributi-datore",
+      label: "Contributi c/azienda",
+      tipo: "sottrazione",
+      importo: costoAzienda.contributiDatore,
+      base: `Base contributiva ${fmt(Math.min(ral, cfg.inps.massimaleAnnuo))}`,
+      formula: `INPS ${pct(cfg.inps.aliquotaDatore)} = ${fmt(costoAzienda.contributiInpsDatore)} + INAIL ${pct(cfg.inps.aliquotaInail)} = ${fmt(costoAzienda.premioInail)}`,
+      riferimento: cfg.inps.fonteAliquotaDatore,
+      soloCostoAzienda: true,
+      warning: true,
+    },
+    {
+      id: "tfr",
+      label: "Accantonamento TFR",
+      tipo: "sottrazione",
+      importo: costoAzienda.accantonamentoTfr,
+      base: `RAL ${fmt(ral)}`,
+      formula: `RAL / ${cfg.tfr.divisore} (${fmt(costoAzienda.quotaTfrLorda)}) − ${pct(cfg.tfr.contributoFondoGaranzia)} RAL (${fmt(costoAzienda.contributoFondoGaranzia)})`,
+      riferimento: cfg.tfr.fonte,
+      nota: "Il TFR è accantonato, non erogato: non entra nel netto in busta paga.",
+      soloCostoAzienda: true,
+    },
+    {
+      id: "ral",
+      label: "RAL — Retribuzione Annua Lorda",
+      tipo: "totale",
+      importo: ral,
+      base: "Input",
+      formula: `Distribuita su ${mensilita} mensilità = ${fmt(ral / mensilita)} lordi/mese`,
+      riferimento: "Retribuzione lorda contrattuale, TFR escluso",
+    },
+    {
+      id: "contributi-dipendente",
+      label: "Contributi previdenziali c/dipendente",
+      tipo: "sottrazione",
+      importo: contributi.totale,
+      base: `Base contributiva ${fmt(contributi.baseContributiva)}${contributi.massimaleApplicato ? " (massimale applicato)" : ""}`,
+      formula:
+        `${pct(cfg.inps.aliquotaDipendente)} × ${fmt(contributi.baseContributiva)} = ${fmt(contributi.quotaBase)}` +
+        (contributi.quotaAggiuntiva > 0
+          ? `\n+ ${pct(cfg.inps.aliquotaAggiuntiva)} × ${fmt(contributi.eccedenzaPrimaFascia)} (quota oltre la prima fascia di ${fmt(cfg.inps.primaFasciaPensionabile)}) = ${fmt(contributi.quotaAggiuntiva)}`
+          : ""),
+      riferimento: `${cfg.inps.fonteAliquotaDipendente}; contributo aggiuntivo 1% art. 3-ter L. 438/1992; ${cfg.inps.fontePrimaFascia}`,
+    },
+    {
+      id: "imponibile",
+      label: "Imponibile fiscale IRPEF",
+      tipo: "totale",
+      importo: imponibileFiscale,
+      base: "RAL − contributi c/dipendente",
+      formula: `${fmt(ral)} − ${fmt(contributi.totale)}`,
+      riferimento: "art. 51 TUIR; contributi obbligatori deducibili ex art. 10 TUIR",
+    },
+    {
+      id: "irpef-lorda",
+      label: "IRPEF lorda",
+      tipo: "sottrazione",
+      importo: irpefLorda.totale,
+      base: `Imponibile ${fmt(imponibileFiscale)}`,
+      formula: irpefLorda.dettaglio
+        .map((d) => `${pct(d.aliquota)} su ${fmt(d.imponibileNelloScaglione)} (${fmt(d.da)}–${d.a === Infinity ? "∞" : fmt(d.a)}) = ${fmt(d.imposta)}`)
+        .join("\n"),
+      riferimento: cfg.irpef.fonte,
+    },
+    {
+      id: "detrazione-lavoro",
+      label: "Detrazione lavoro dipendente",
+      tipo: "aggiunta",
+      importo: detrazioneLavoro.totale,
+      base: `Reddito complessivo ${fmt(redditoComplessivo)}`,
+      formula:
+        `${detrazioneLavoro.fascia.espressione} = ${fmt(detrazioneLavoro.teorica)}` +
+        (giorniLavorati !== 365 ? `\n× ${giorniLavorati}/365 = ${fmt(detrazioneLavoro.ragguagliata)}` : "") +
+        (detrazioneLavoro.maggiorazione > 0 ? `\n+ maggiorazione ${fmt(detrazioneLavoro.maggiorazione)} (redditi 25.000–35.000)` : ""),
+      riferimento: cfg.detrazioneLavoroDipendente.fonte,
+      nota: detrazioneLavoro.fascia.descrizione,
+    },
+    {
+      id: "ulteriore-detrazione",
+      label: "Ulteriore detrazione (cuneo fiscale)",
+      tipo: "aggiunta",
+      importo: ulteriore.importo,
+      base: `Reddito complessivo ${fmt(redditoComplessivo)}`,
+      formula: ulteriore.spetta
+        ? `${ulteriore.fascia.espressione} = ${fmt(ulteriore.importo)}`
+        : "Non spetta: reddito complessivo fuori dalla fascia 20.000–40.000 €",
+      riferimento: cfg.ulterioreDetrazione.fonte,
+    },
+    {
+      id: "irpef-netta",
+      label: "IRPEF netta",
+      tipo: "totale",
+      importo: irpefNetta,
+      base: "IRPEF lorda − detrazioni",
+      formula:
+        `${fmt(irpefLorda.totale)} − ${fmt(detrazioniTotaliTeoriche)} = ${fmt(irpefLorda.totale - detrazioniTotaliTeoriche)}` +
+        (detrazioniPerse > 0 ? `\n→ azzerata a 0; ${fmt(detrazioniPerse)} di detrazioni perse per incapienza` : ""),
+      riferimento: "Le detrazioni non generano credito d'imposta: il risultato non può essere negativo",
+    },
+    {
+      id: "add-regionale",
+      label: `Addizionale regionale ${cfg.addizionaleRegionale.regione}`,
+      tipo: "sottrazione",
+      importo: addRegionale,
+      base: `Imponibile ${fmt(imponibileFiscale)}`,
+      formula: addizionaliDovute
+        ? addRegionaleCalc.dettaglio
+            .map((d) => `${pct(d.aliquota)} su ${fmt(d.imponibileNelloScaglione)} = ${fmt(d.imposta)}`)
+            .join("\n")
+        : "Non dovuta: IRPEF netta pari a zero",
+      riferimento: cfg.addizionaleRegionale.fonte,
+    },
+    {
+      id: "add-comunale",
+      label: `Addizionale comunale ${cfg.addizionaleComunale.comune}`,
+      tipo: "sottrazione",
+      importo: addComunale,
+      base: `Imponibile ${fmt(imponibileFiscale)}`,
+      formula: !addizionaliDovute
+        ? "Non dovuta: IRPEF netta pari a zero"
+        : addComunaleCalc.esente
+        ? `Esente: imponibile ≤ soglia di esenzione ${fmt(cfg.addizionaleComunale.sogliaEsenzione)}`
+        : `${pct(cfg.addizionaleComunale.aliquota)} × ${fmt(addComunaleCalc.baseApplicata)}`,
+      riferimento: cfg.addizionaleComunale.fonte,
+      nota: `La soglia di ${fmt(cfg.addizionaleComunale.sogliaEsenzione)} opera come esenzione totale, non come franchigia: superata di 1 €, l'aliquota colpisce l'intero imponibile.`,
+    },
+    {
+      id: "trattamento-integrativo",
+      label: "Trattamento integrativo",
+      tipo: "aggiunta",
+      importo: trattamentoIntegrativo.importo,
+      base: `Reddito complessivo ${fmt(redditoComplessivo)}`,
+      formula: trattamentoIntegrativo.motivo,
+      riferimento: cfg.trattamentoIntegrativo.fonte,
+    },
+    {
+      id: "somma-integrativa",
+      label: "Somma integrativa (redditi ≤ 20.000)",
+      tipo: "aggiunta",
+      importo: sommaIntegrativa.importo,
+      base: `Reddito di lavoro dipendente ${fmt(redditoLavoroDipendente)}`,
+      formula: sommaIntegrativa.spetta
+        ? `${pct(sommaIntegrativa.percentuale)} × ${fmt(redditoLavoroDipendente)}`
+        : `Non spetta: reddito complessivo oltre ${fmt(cfg.sommaIntegrativa.sogliaRedditoComplessivo)}`,
+      riferimento: cfg.sommaIntegrativa.fonte,
+      nota: "Somma non imponibile: non riduce l'imposta, si aggiunge al netto.",
+    },
+    {
+      id: "netto",
+      label: "Netto annuo",
+      tipo: "totale",
+      importo: nettoAnnuo,
+      base: "RAL − contributi − imposte + trattamento integrativo + somma integrativa",
+      formula: `${fmt(ral)} − ${fmt(contributi.totale)} − ${fmt(totaleImposte)} + ${fmt(bonusNetti)}`,
+      riferimento: "Risultato finale del modello",
+    },
+  ];
+
+  return {
+    input: { ral, mensilita, anno: cfg.anno, giorniLavorati },
+    costoAzienda,
+    contributi,
+    imponibileFiscale,
+    redditoComplessivo,
+    irpefLorda,
+    detrazioneLavoro,
+    ulteriore,
+    detrazioniTotaliTeoriche,
+    detrazioniPerse,
+    irpefNetta,
+    trattamentoIntegrativo,
+    sommaIntegrativa,
+    addizionali: {
+      regionale: addRegionale,
+      comunale: addComunale,
+      dettaglioRegionale: addRegionaleCalc.dettaglio,
+      dettaglioComunale: addComunaleCalc,
+      dovute: addizionaliDovute,
+      totale: addRegionale + addComunale,
+    },
+    totaleImposte,
+    totaleTrattenute,
+    bonusNetti,
+    nettoAnnuo,
+    nettoMensile,
+    aliquotaMediaEffettiva,
+    cuneoFiscale,
+    steps,
+  };
+}
+
+/**
+ * MODALITÀ INVERSA — dal netto mensile desiderato alla RAL.
+ * Ricerca binaria sulla funzione diretta, che è monotona crescente a tratti
+ * (i cliff normativi la rendono non continua: in quei punti la ricerca converge
+ * al valore più basso che raggiunge o supera il target).
+ */
+function ralDaNettoMensile({ nettoMensileTarget, mensilita, config, tolleranza = 0.01, maxIter = 100 }) {
+  let lo = 0;
+  let hi = 1000000;
+
+  const nettoDi = (ral) => calcolaNetto({ ral, mensilita, config }).nettoMensile;
+
+  if (nettoDi(hi) < nettoMensileTarget) {
+    return { trovata: false, ral: null, iterazioni: 0 };
+  }
+
+  let iter = 0;
+  while (hi - lo > tolleranza && iter < maxIter) {
+    const mid = (lo + hi) / 2;
+    if (nettoDi(mid) < nettoMensileTarget) lo = mid;
+    else hi = mid;
+    iter++;
+  }
+
+  const ral = hi;
+  return { trovata: true, ral, iterazioni: iter, risultato: calcolaNetto({ ral, mensilita, config }) };
+}
+
+/**
+ * Aliquota marginale effettiva: quanto dell'euro lordo aggiuntivo NON arriva al
+ * lavoratore. Calcolata numericamente per catturare anche i salti da décalage
+ * delle detrazioni e i cliff (20.000 e 23.000).
+ */
+function aliquotaMarginale(ral, config, delta = 100) {
+  const a = calcolaNetto({ ral: Math.max(0, ral - delta / 2), mensilita: 12, config }).nettoAnnuo;
+  const b = calcolaNetto({ ral: ral + delta / 2, mensilita: 12, config }).nettoAnnuo;
+  return 1 - (b - a) / delta;
+}
+
+function curvaAliquotaMarginale(config, { da = 0, a = 100000, passo = 250 } = {}) {
+  const punti = [];
+  for (let ral = da; ral <= a; ral += passo) {
+    punti.push({ ral, marginale: aliquotaMarginale(ral, config, passo) });
+  }
+  return punti;
+}
+
+/**
+ * Converte una soglia espressa in imponibile fiscale nella RAL corrispondente.
+ * Sotto la prima fascia pensionabile il rapporto è lineare, quindi l'inversione
+ * è esatta; sopra, il contributo aggiuntivo dell'1% la rende un'approssimazione.
+ */
+function ralDaImponibile(imponibile, config) {
+  const c = config.inps;
+  const ralStimata = imponibile / (1 - c.aliquotaDipendente);
+  if (ralStimata <= c.primaFasciaPensionabile) return ralStimata;
+  return (imponibile - c.primaFasciaPensionabile * c.aliquotaAggiuntiva) /
+         (1 - c.aliquotaDipendente - c.aliquotaAggiuntiva);
+}
+
+/**
+ * Soglie normative rilevanti, derivate dalla config e riportate in RAL.
+ * Nessun valore hardcoded: se cambia la config, cambiano le soglie.
+ */
+function soglieNotevoli(config) {
+  const s = [];
+  const add = (imponibile, etichetta) =>
+    s.push({ imponibile, ral: ralDaImponibile(imponibile, config), etichetta });
+
+  config.sommaIntegrativa.fasce.forEach((f, i) => {
+    if (i < config.sommaIntegrativa.fasce.length - 1)
+      add(f.fino, `somma integrativa ${pct(f.percentuale)} → ${pct(config.sommaIntegrativa.fasce[i + 1].percentuale)}`);
+  });
+  add(config.sommaIntegrativa.sogliaRedditoComplessivo, "fine somma integrativa, inizio ulteriore detrazione");
+  add(config.addizionaleComunale.sogliaEsenzione, `soglia esenzione addizionale comunale ${config.addizionaleComunale.comune}`);
+  config.irpef.scaglioni.slice(0, -1).forEach((sc, i) =>
+    add(sc.fino, `scaglione IRPEF ${pct(sc.aliquota)} → ${pct(config.irpef.scaglioni[i + 1].aliquota)}`));
+  add(config.detrazioneLavoroDipendente.maggiorazione.a, "fine maggiorazione 65 € art. 13 c. 1-bis");
+  add(config.ulterioreDetrazione.fasce[config.ulterioreDetrazione.fasce.length - 1].a, "fine ulteriore detrazione");
+  add(config.inps.primaFasciaPensionabile, "inizio contributo aggiuntivo 1%");
+
+  return s.sort((a, b) => a.ral - b.ral);
+}
+
+/**
+ * Individua numericamente i punti in cui il netto DIMINUISCE al crescere della RAL.
+ * Sono i cliff normativi: informazione di prodotto rilevante, perché in quei punti
+ * un aumento di stipendio lordo peggiora la busta paga.
+ */
+function trovaCliff(config, { da = 0, a = 100000, passo = 50 } = {}) {
+  const cliff = [];
+  let prec = calcolaNetto({ ral: da, mensilita: 12, config }).nettoAnnuo;
+  for (let ral = da + passo; ral <= a; ral += passo) {
+    const n = calcolaNetto({ ral, mensilita: 12, config }).nettoAnnuo;
+    if (n < prec - 0.01) cliff.push({ ral, perdita: n - prec });
+    prec = n;
+  }
+  return cliff;
+}
+
+// --- Utility di formattazione (usate anche dal motore per comporre le stringhe
+// --- delle formule; sono pure e senza dipendenze dal DOM).
+function fmt(n) {
+  if (n === Infinity) return "∞";
+  return new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(n);
+}
+function fmt0(n) {
+  return new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
+}
+function pct(n, decimali = 2) {
+  return `${(n * 100).toFixed(decimali).replace(".", ",")}%`;
+}
+
+// Esposizione per test in isolamento (console del browser o import in Node).
+window.JetHR = {
+  TAX_CONFIG,
+  calcolaNetto,
+  ralDaNettoMensile,
+  aliquotaMarginale,
+  curvaAliquotaMarginale,
+  applicaScaglioni,
+  calcolaContributiDipendente,
+  calcolaDetrazioneLavoro,
+  calcolaTrattamentoIntegrativo,
+  soglieNotevoli,
+  trovaCliff,
+  ralDaImponibile,
+};
+
+
+/* =============================================================================
+   ASSUNZIONI E LIMITI DEL MODELLO — elenco esplicito, mostrato in UI.
+============================================================================= */
+
+const ASSUNZIONI = [
+  "Impiegato, tempo indeterminato, full time, rapporto attivo per l'intero anno (365 giorni).",
+  "Residente e domiciliato fiscalmente a Milano (Lombardia) per tutto l'anno.",
+  "Unica fonte di reddito: reddito complessivo = reddito di lavoro dipendente.",
+  "Nessun carico familiare, nessun onere detraibile o deducibile oltre ai contributi obbligatori.",
+  "La RAL è al lordo delle sole trattenute obbligatorie e NON comprende il TFR.",
+  "Le mensilità aggiuntive (13ª/14ª) sono già incluse nella RAL: cambiare il numero di mensilità ridistribuisce lo stesso netto annuo, non lo aumenta.",
+  "Nessun arrotondamento all'unità di euro per periodo di paga: il calcolo è annuale in doppia precisione.",
+];
+
+const NON_COPERTO = [
+  { voce: "Detrazioni per carichi di famiglia (art. 12 TUIR)", perche: "Coniuge, figli e altri familiari a carico modificano sia l'IRPEF netta sia il test di capienza del trattamento integrativo." },
+  { voce: "Assegno Unico Universale", perche: "Erogazione INPS fuori busta paga, non è reddito imponibile ma incide sul reddito disponibile reale." },
+  { voce: "Fringe benefit e auto aziendale", perche: "Concorrono all'imponibile fiscale e contributivo oltre la soglia di esenzione annua." },
+  { voce: "Welfare aziendale e flexible benefit", perche: "Non concorrono a formare reddito: abbassano l'imponibile a parità di valore erogato." },
+  { voce: "Premi di risultato a tassazione sostitutiva", perche: "Imposta sostitutiva agevolata su una quota di retribuzione variabile, in luogo dell'IRPEF ordinaria." },
+  { voce: "Detassazione di straordinari, notturni, festivi e nuove misure L. 199/2025", perche: "Regimi sostitutivi su singole voci retributive, con soglie e requisiti reddituali propri." },
+  { voce: "Specificità di CCNL", perche: "Numero di mensilità, elementi retributivi, contribuzione a fondi (Est, Metasalute, Previndai...) e aliquote datore variano per contratto." },
+  { voce: "Previdenza complementare e fondi sanitari", perche: "I contributi del lavoratore sono deducibili entro un plafond annuo: riducono l'imponibile IRPEF." },
+  { voce: "Addizionali per competenza vs per cassa", perche: "Nel modello sono imputate all'anno di competenza; in busta paga il saldo dell'anno N si trattiene nell'anno N+1 e l'acconto comunale segue regole proprie." },
+  { voce: "Conguaglio di fine anno e arrotondamenti mensili", perche: "Il calcolo reale avviene mese per mese con arrotondamenti e viene rettificato a dicembre." },
+  { voce: "Regimi agevolati (impatriati, ricercatori, under 30, ZES)", perche: "Abbattono l'imponibile fiscale in misura rilevante e hanno requisiti soggettivi complessi." },
+  { voce: "Massimale contributivo per i soli nuovi iscritti post 1995", perche: "Il modello applica sempre il massimale, ma per chi ha anzianità contributiva ante 1996 non si applica." },
+  { voce: "Cassa integrazione, malattia, maternità, congedi", perche: "Alterano imponibile e giorni retribuiti, e con essi il ragguaglio delle detrazioni." },
+  { voce: "Neutralizzazione del taglio IRPEF oltre 200.000 € di reddito", perche: "La L. 199/2025 recupera il beneficio dell'aliquota al 33% riducendo le detrazioni: non implementato." },
+];
+
+const DA_VERIFICARE = [
+  { valore: "Aliquota contributiva c/azienda 28,98%", ipotesi: "Terziario/commercio con meno di 50 dipendenti", dove: "Tabelle contributive INPS per il CCNL e la classificazione aziendale effettiva; cambia di diversi punti tra industria, commercio e artigianato." },
+  { valore: "Premio INAIL 0,40%", ipotesi: "Tasso medio per impiegato amministrativo", dove: "Voce di tariffa INAIL della PAT aziendale: il tasso reale può essere molto più basso o più alto." },
+  { valore: "Maggiorazione detrazione 65 € (art. 13 c. 1-bis TUIR), fascia 25.000–35.000", ipotesi: "Fascia e importo confermati per il 2026", dove: "Testo vigente dell'art. 13 c. 1-bis TUIR e istruzioni Agenzia Entrate per l'anno d'imposta 2026." },
+  { valore: "Scaglioni addizionale regionale Lombardia (1,23% / 1,58% / 1,72% / 1,73%)", ipotesi: "Aliquote progressive per scaglioni, invariate nel 2026", dove: "Portale del federalismo fiscale MEF, sezione addizionale regionale IRPEF — Regione Lombardia." },
+  { valore: "Addizionale comunale Milano 0,80% con esenzione a 23.000 €", ipotesi: "Esenzione come cliff sull'intero imponibile", dove: "Delibera comunale di Milano pubblicata sul Portale del federalismo fiscale: verificare aliquota, soglia e meccanismo (cliff o franchigia)." },
+  { valore: "Parametri INPS 2025 (prima fascia 55.008 €, massimale 120.607 €)", ipotesi: "Ricostruiti, non confermati su circolare", dove: "Circolare INPS su minimali e massimali per l'anno 2025." },
+  { valore: "Base del test di capienza del trattamento integrativo", ipotesi: "Considerata la sola detrazione da lavoro dipendente", dove: "D.L. 3/2020 art. 1 c. 2: la norma richiede la somma di più detrazioni (artt. 12, 13, 15 e rate pluriennali)." },
+  { valore: "Cumulabilità di trattamento integrativo, somma integrativa e ulteriore detrazione", ipotesi: "Le tre misure sono cumulabili", dove: "Circolari Agenzia Entrate sul taglio del cuneo fiscale (L. 207/2024 e conferma 2026)." },
+  { valore: "Base di calcolo della somma integrativa ≤ 20.000 €", ipotesi: "Percentuale applicata al reddito di lavoro dipendente, soglia di accesso sul reddito complessivo", dove: "L. 207/2024 art. 1 cc. 4-5 e relativa circolare interpretativa." },
+];
+
+const RAL_VALIDAZIONE = [20000, 35000, 55000, 80000];
+
+
+/* =============================================================================
+   (C) UI
+============================================================================= */
+
+const { useState, useMemo } = React;
+
+function Card({ title, children, className = "" }) {
+  return (
+    <div className={`bg-white rounded-lg border border-slate-200 ${className}`}>
+      {title && <div className="px-4 py-3 border-b border-slate-200 font-semibold text-sm">{title}</div>}
+      <div className="p-4">{children}</div>
+    </div>
+  );
+}
+
+function KPI({ label, value, sub, accent }) {
+  return (
+    <div className={`rounded-lg p-4 ${accent ? "bg-slate-900 text-white" : "bg-white border border-slate-200"}`}>
+      <div className={`text-xs uppercase tracking-wide ${accent ? "text-slate-300" : "text-slate-500"}`}>{label}</div>
+      <div className="text-2xl font-bold mt-1 tabular-nums">{value}</div>
+      {sub && <div className={`text-xs mt-1 ${accent ? "text-slate-400" : "text-slate-500"}`}>{sub}</div>}
+    </div>
+  );
+}
+
+function Waterfall({ result, mostraCostoAzienda, selected, onSelect }) {
+  const steps = result.steps.filter((s) => mostraCostoAzienda || !s.soloCostoAzienda);
+  const max = Math.max(...steps.map((s) => s.importo));
+
+  const colore = (s) => {
+    if (s.tipo === "totale") return "bg-slate-700";
+    if (s.tipo === "sottrazione") return "bg-rose-400";
+    return "bg-emerald-400";
+  };
+  const segno = (s) => (s.tipo === "totale" ? "=" : s.tipo === "sottrazione" ? "−" : "+");
+
+  return (
+    <div className="space-y-1">
+      {steps.map((s) => {
+        const attivo = selected === s.id;
+        const larghezza = max > 0 ? Math.max(0.5, (s.importo / max) * 100) : 0;
+        return (
+          <div key={s.id}>
+            <button
+              onClick={() => onSelect(attivo ? null : s.id)}
+              className={`w-full text-left px-3 py-2 rounded transition ${attivo ? "bg-slate-100 ring-1 ring-slate-300" : "hover:bg-slate-50"}`}
+            >
+              <div className="flex items-baseline justify-between gap-4">
+                <span className={`text-sm ${s.tipo === "totale" ? "font-semibold" : ""}`}>
+                  <span className="inline-block w-4 text-slate-400">{segno(s)}</span>
+                  {s.label}
+                  {s.warning && <span className="ml-1 text-amber-600 text-xs" title="Valore da verificare">⚠</span>}
+                </span>
+                <span className={`text-sm tabular-nums whitespace-nowrap ${s.tipo === "totale" ? "font-semibold" : "text-slate-600"}`}>
+                  {fmt(s.importo)}
+                </span>
+              </div>
+              <div className="mt-1 h-1.5 bg-slate-100 rounded overflow-hidden">
+                <div className={`h-full ${colore(s)}`} style={{ width: `${larghezza}%` }} />
+              </div>
+            </button>
+
+            {attivo && (
+              <div className="mx-3 mb-2 p-3 bg-slate-50 border border-slate-200 rounded text-xs space-y-2">
+                <div>
+                  <div className="text-slate-500 uppercase tracking-wide text-[10px] font-semibold">Importo</div>
+                  <div className="tabular-nums">{fmt(s.importo)}</div>
+                </div>
+                <div>
+                  <div className="text-slate-500 uppercase tracking-wide text-[10px] font-semibold">Base di calcolo</div>
+                  <div>{s.base}</div>
+                </div>
+                <div>
+                  <div className="text-slate-500 uppercase tracking-wide text-[10px] font-semibold">Formula applicata</div>
+                  <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed">{s.formula}</pre>
+                </div>
+                <div>
+                  <div className="text-slate-500 uppercase tracking-wide text-[10px] font-semibold">Riferimento</div>
+                  <div className="text-slate-600">{s.riferimento}</div>
+                </div>
+                {s.nota && (
+                  <div className="pt-1 border-t border-slate-200 text-slate-600 italic">{s.nota}</div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function GraficoMarginale({ config }) {
+  const MAX_RAL = 100000;
+  const PASSO = 100;
+
+  const { punti, soglie, cliff } = useMemo(() => ({
+    punti: curvaAliquotaMarginale(config, { da: 0, a: MAX_RAL, passo: PASSO }),
+    soglie: soglieNotevoli(config).filter((s) => s.ral <= MAX_RAL),
+    cliff: trovaCliff(config, { da: 0, a: MAX_RAL, passo: 50 }),
+  }), [config]);
+
+  const W = 720, H = 280, ML = 46, MB = 26, MT = 12, MR = 12;
+  const maxY = Math.max(1.2, ...punti.map((p) => p.marginale));
+  const x = (ral) => ML + (ral / MAX_RAL) * (W - ML - MR);
+  const y = (v) => MT + (1 - v / maxY) * (H - MT - MB);
+
+  const path = punti
+    .map((p, i) => `${i === 0 ? "M" : "L"}${x(p.ral).toFixed(1)},${y(p.marginale).toFixed(1)}`)
+    .join(" ");
+
+  const ticks = [0, 0.25, 0.5, 0.75, 1.0].filter((t) => t <= maxY);
+
+  return (
+    <div>
+      <div className="overflow-x-auto">
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full min-w-[620px]">
+          {/* banda sopra il 100%: zona in cui il lordo aggiuntivo riduce il netto */}
+          <rect x={ML} y={y(maxY)} width={W - ML - MR} height={Math.max(0, y(1) - y(maxY))} fill="#fee2e2" />
+          {ticks.map((t) => (
+            <g key={t}>
+              <line x1={ML} x2={W - MR} y1={y(t)} y2={y(t)} stroke="#e2e8f0" strokeWidth="1" />
+              <text x={ML - 6} y={y(t) + 3} textAnchor="end" fontSize="9" fill="#64748b">{(t * 100).toFixed(0)}%</text>
+            </g>
+          ))}
+          <line x1={ML} x2={W - MR} y1={y(1)} y2={y(1)} stroke="#f87171" strokeWidth="1" strokeDasharray="4 3" />
+          {soglie.map((s, i) => (
+            <line key={i} x1={x(s.ral)} x2={x(s.ral)} y1={MT} y2={H - MB} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3 3" />
+          ))}
+          {[0, 20000, 40000, 60000, 80000, 100000].map((v) => (
+            <text key={v} x={x(v)} y={H - MB + 14} textAnchor="middle" fontSize="9" fill="#64748b">{v / 1000}k</text>
+          ))}
+          <path d={path} fill="none" stroke="#0f172a" strokeWidth="1.6" />
+        </svg>
+      </div>
+
+      <p className="mt-2 text-xs text-slate-600">
+        Aliquota marginale effettiva: quota dell'euro lordo aggiuntivo che <em>non</em> arriva al lavoratore
+        (contributi + IRPEF + addizionali, comprese le perdite di bonus e detrazioni per décalage).
+        Le linee tratteggiate verticali sono le soglie normative, calcolate dalla config e convertite in RAL.
+      </p>
+
+      <div className="mt-3 grid sm:grid-cols-2 gap-4">
+        <div>
+          <div className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 mb-1">Soglie normative</div>
+          <ul className="text-xs space-y-0.5 text-slate-600">
+            {soglie.map((s, i) => (
+              <li key={i} className="tabular-nums">
+                <span className="font-semibold">{fmt0(s.ral)}</span> di RAL
+                <span className="text-slate-400"> (imponibile {fmt0(s.imponibile)})</span> — {s.etichetta}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide font-semibold text-rose-600 mb-1">
+            Cliff — dove aumentare la RAL riduce il netto
+          </div>
+          {cliff.length === 0 ? (
+            <p className="text-xs text-slate-500">Nessun cliff rilevato in questo intervallo.</p>
+          ) : (
+            <ul className="text-xs space-y-0.5 text-slate-600 tabular-nums">
+              {cliff.map((c, i) => (
+                <li key={i}>
+                  intorno a <span className="font-semibold">{fmt0(c.ral)}</span> di RAL: il netto annuo perde{" "}
+                  <span className="text-rose-600 font-semibold">{fmt(Math.abs(c.perdita))}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-xs text-slate-500 mt-2">
+            Rilevati numericamente scandendo la funzione diretta a passi di 50 € di RAL: sono i punti in cui
+            una soglia opera come cliff anziché come décalage graduale. È l'informazione più utile per chi
+            negozia un aumento.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TabellaValidazione({ config, mensilita }) {
+  const righe = RAL_VALIDAZIONE.map((ral) => ({ ral, r: calcolaNetto({ ral, mensilita, config }) }));
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-left text-slate-500 border-b border-slate-200">
+            <th className="py-2 pr-3 font-semibold">RAL</th>
+            <th className="py-2 pr-3 font-semibold text-right">Contributi</th>
+            <th className="py-2 pr-3 font-semibold text-right">Imponibile</th>
+            <th className="py-2 pr-3 font-semibold text-right">IRPEF lorda</th>
+            <th className="py-2 pr-3 font-semibold text-right">Detrazioni</th>
+            <th className="py-2 pr-3 font-semibold text-right">IRPEF netta</th>
+            <th className="py-2 pr-3 font-semibold text-right">Addiz.</th>
+            <th className="py-2 pr-3 font-semibold text-right">Bonus</th>
+            <th className="py-2 pr-3 font-semibold text-right">Netto anno</th>
+            <th className="py-2 pr-3 font-semibold text-right">Netto/mese</th>
+            <th className="py-2 font-semibold text-right">Aliq. media</th>
+          </tr>
+        </thead>
+        <tbody className="tabular-nums">
+          {righe.map(({ ral, r }) => (
+            <tr key={ral} className="border-b border-slate-100">
+              <td className="py-2 pr-3 font-semibold">{fmt0(ral)}</td>
+              <td className="py-2 pr-3 text-right">{fmt0(r.contributi.totale)}</td>
+              <td className="py-2 pr-3 text-right">{fmt0(r.imponibileFiscale)}</td>
+              <td className="py-2 pr-3 text-right">{fmt0(r.irpefLorda.totale)}</td>
+              <td className="py-2 pr-3 text-right">{fmt0(r.detrazioniTotaliTeoriche)}</td>
+              <td className="py-2 pr-3 text-right">{fmt0(r.irpefNetta)}</td>
+              <td className="py-2 pr-3 text-right">{fmt0(r.addizionali.totale)}</td>
+              <td className="py-2 pr-3 text-right">{fmt0(r.bonusNetti)}</td>
+              <td className="py-2 pr-3 text-right font-semibold">{fmt0(r.nettoAnnuo)}</td>
+              <td className="py-2 pr-3 text-right">{fmt0(r.nettoMensile)}</td>
+              <td className="py-2 text-right">{pct(r.aliquotaMediaEffettiva, 1)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-3 text-xs text-slate-500">
+        Valori su {mensilita} mensilità, anno {config.anno}. Da confrontare con un calcolatore di riferimento:
+        scostamenti di poche decine di euro sono attesi (arrotondamenti mensili, base del trattamento integrativo,
+        aliquote datore); scostamenti superiori indicano un errore di modello.
+      </p>
+    </div>
+  );
+}
+
+function App() {
+  const [anno, setAnno] = useState(2026);
+  const [ral, setRal] = useState(35000);
+  const [mensilita, setMensilita] = useState(13);
+  const [mostraCostoAzienda, setMostraCostoAzienda] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [modalitaInversa, setModalitaInversa] = useState(false);
+  const [nettoTarget, setNettoTarget] = useState(2000);
+
+  const config = TAX_CONFIG[anno];
+
+  const inversa = useMemo(() => {
+    if (!modalitaInversa) return null;
+    return ralDaNettoMensile({ nettoMensileTarget: nettoTarget, mensilita, config });
+  }, [modalitaInversa, nettoTarget, mensilita, anno]);
+
+  const ralEffettiva = modalitaInversa && inversa && inversa.trovata ? inversa.ral : ral;
+  const result = useMemo(
+    () => calcolaNetto({ ral: ralEffettiva, mensilita, config }),
+    [ralEffettiva, mensilita, anno]
+  );
+
+  return (
+    <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-6">
+      <header className="space-y-1">
+        <h1 className="text-2xl font-bold">Calcolatore RAL → Netto</h1>
+        <p className="text-sm text-slate-600">
+          Prototipo — impiegato a tempo indeterminato, Milano (Lombardia), nessuna agevolazione, anno {config.etichetta}.
+        </p>
+      </header>
+
+      {/* INPUT */}
+      <Card>
+        <div className="flex flex-wrap gap-4 items-end">
+          <div className="flex rounded-md border border-slate-300 overflow-hidden text-sm">
+            <button
+              onClick={() => setModalitaInversa(false)}
+              className={`px-3 py-2 ${!modalitaInversa ? "bg-slate-900 text-white" : "bg-white hover:bg-slate-50"}`}
+            >
+              Da RAL
+            </button>
+            <button
+              onClick={() => setModalitaInversa(true)}
+              className={`px-3 py-2 border-l border-slate-300 ${modalitaInversa ? "bg-slate-900 text-white" : "bg-white hover:bg-slate-50"}`}
+            >
+              Da netto mensile
+            </button>
+          </div>
+
+          {!modalitaInversa ? (
+            <label className="block">
+              <span className="block text-xs font-semibold text-slate-600 mb-1">RAL annua (€)</span>
+              <input
+                type="number" min="0" step="500" value={ral}
+                onChange={(e) => setRal(Math.max(0, Number(e.target.value) || 0))}
+                className="w-40 px-3 py-2 border border-slate-300 rounded-md text-sm tabular-nums"
+              />
+            </label>
+          ) : (
+            <label className="block">
+              <span className="block text-xs font-semibold text-slate-600 mb-1">Netto mensile desiderato (€)</span>
+              <input
+                type="number" min="0" step="50" value={nettoTarget}
+                onChange={(e) => setNettoTarget(Math.max(0, Number(e.target.value) || 0))}
+                className="w-40 px-3 py-2 border border-slate-300 rounded-md text-sm tabular-nums"
+              />
+            </label>
+          )}
+
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600 mb-1">Mensilità</span>
+            <select
+              value={mensilita} onChange={(e) => setMensilita(Number(e.target.value))}
+              className="px-3 py-2 border border-slate-300 rounded-md text-sm bg-white"
+            >
+              <option value={12}>12</option>
+              <option value={13}>13</option>
+              <option value={14}>14</option>
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600 mb-1">Anno fiscale</span>
+            <select
+              value={anno} onChange={(e) => setAnno(Number(e.target.value))}
+              className="px-3 py-2 border border-slate-300 rounded-md text-sm bg-white"
+            >
+              {Object.keys(TAX_CONFIG).sort().reverse().map((a) => (
+                <option key={a} value={a}>{a}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex items-center gap-2 text-sm pb-2">
+            <input
+              type="checkbox" checked={mostraCostoAzienda}
+              onChange={(e) => setMostraCostoAzienda(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            Mostra costo azienda
+          </label>
+        </div>
+
+        {modalitaInversa && (
+          <div className="mt-4 p-3 bg-slate-50 border border-slate-200 rounded text-sm">
+            {inversa && inversa.trovata ? (
+              <div className="flex flex-wrap gap-6">
+                <div>
+                  <div className="text-xs text-slate-500">RAL necessaria</div>
+                  <div className="text-lg font-bold tabular-nums">{fmt(inversa.ral)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Costo azienda</div>
+                  <div className="text-lg font-bold tabular-nums">{fmt(result.costoAzienda.costoTotale)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Netto mensile ottenuto</div>
+                  <div className="text-lg font-bold tabular-nums">{fmt(result.nettoMensile)}</div>
+                </div>
+                <div className="text-xs text-slate-500 self-end">
+                  Ricerca binaria, {inversa.iterazioni} iterazioni, tolleranza 1 cent di RAL.
+                </div>
+              </div>
+            ) : (
+              <span className="text-rose-600">Netto target non raggiungibile entro 1.000.000 € di RAL.</span>
+            )}
+          </div>
+        )}
+      </Card>
+
+      {/* OUTPUT PRIMARIO */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <KPI accent label="Netto annuo" value={fmt0(result.nettoAnnuo)} sub={`su RAL ${fmt0(result.input.ral)}`} />
+        <KPI accent label="Netto mensile" value={fmt0(result.nettoMensile)} sub={`${mensilita} mensilità`} />
+        <KPI label="Totale trattenute" value={fmt0(result.totaleTrattenute - result.bonusNetti)} sub="contributi + imposte − bonus" />
+        <KPI label="Aliquota media effettiva" value={pct(result.aliquotaMediaEffettiva, 1)} sub={`cuneo sul costo azienda ${pct(result.cuneoFiscale, 1)}`} />
+      </div>
+
+      {/* WATERFALL */}
+      <Card title="Dal costo azienda al netto — clicca una voce per il dettaglio">
+        <Waterfall result={result} mostraCostoAzienda={mostraCostoAzienda} selected={selected} onSelect={setSelected} />
+      </Card>
+
+      {/* GRAFICO */}
+      <Card title="Aliquota marginale effettiva al variare della RAL (0 – 100.000 €)">
+        <GraficoMarginale config={config} />
+      </Card>
+
+      {/* VALIDAZIONE */}
+      <Card title="Tabella di validazione — da confrontare con calcolatori ufficiali">
+        <TabellaValidazione config={config} mensilita={mensilita} />
+      </Card>
+
+      {/* ASSUNZIONI E LIMITI */}
+      <div className="grid lg:grid-cols-2 gap-4">
+        <Card title="Assunzioni del modello">
+          <ul className="text-xs space-y-2 text-slate-700">
+            {ASSUNZIONI.map((a, i) => (
+              <li key={i} className="flex gap-2"><span className="text-slate-400">•</span><span>{a}</span></li>
+            ))}
+          </ul>
+        </Card>
+
+        <Card title="Cosa il modello NON copre">
+          <ul className="text-xs space-y-2 text-slate-700">
+            {NON_COPERTO.map((n, i) => (
+              <li key={i}>
+                <span className="font-semibold">{n.voce}</span>
+                <span className="text-slate-500"> — {n.perche}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      </div>
+
+      <Card title="⚠ Da verificare prima di qualunque uso reale" className="border-amber-300">
+        <ul className="text-xs space-y-3">
+          {DA_VERIFICARE.map((d, i) => (
+            <li key={i} className="border-l-2 border-amber-300 pl-3">
+              <div className="font-semibold">{d.valore}</div>
+              <div className="text-slate-600">Ipotesi adottata: {d.ipotesi}</div>
+              <div className="text-slate-500">Dove controllare: {d.dove}</div>
+            </li>
+          ))}
+        </ul>
+      </Card>
+
+      <footer className="text-xs text-slate-400 pb-8">
+        Prototipo a scopo dimostrativo. Non costituisce consulenza fiscale o del lavoro.
+        Motore esposto su <code className="font-mono">window.JetHR</code> per test da console.
+      </footer>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
