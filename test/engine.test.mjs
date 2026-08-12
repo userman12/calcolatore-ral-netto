@@ -37,7 +37,6 @@ function caricaMotore() {
 
 const JetHR = caricaMotore();
 const cfg2026 = JetHR.TAX_CONFIG[2026];
-const cfg2025 = JetHR.TAX_CONFIG[2025];
 const calcola = (ral, config = cfg2026, mensilita = 13) =>
   JetHR.calcolaNetto({ ral, mensilita, config });
 
@@ -200,20 +199,21 @@ test("i cliff rilevati coincidono con soglie normative note", () => {
   }
 });
 
-test("il taglio IRPEF 35% → 33% aumenta il netto sopra i 28.000 € di imponibile", () => {
-  for (const ral of [35000, 55000, 80000]) {
-    const a = calcola(ral, cfg2025).nettoAnnuo;
-    const b = calcola(ral, cfg2026).nettoAnnuo;
-    assert.ok(b > a, `RAL ${ral}: 2026 (${b}) non migliore del 2025 (${a})`);
-  }
-});
-
-test("il beneficio del solo taglio IRPEF non supera i 440 € teorici", () => {
-  // Il confronto diretto 2025 vs 2026 sconta anche il diverso limite della prima
-  // fascia pensionabile, che sposta i contributi. Per isolare l'effetto della sola
-  // aliquota si costruisce una config 2026 con gli scaglioni IRPEF del 2025:
-  // il risparmio massimo è 2% × 22.000 = 440 €, al lordo delle addizionali.
-  const cfgIbrida = { ...cfg2026, irpef: cfg2025.irpef };
+test("il beneficio del taglio IRPEF 35% → 33% non supera i 440 € teorici", () => {
+  // La config in uso contiene il solo anno corrente. Per misurare l'effetto della
+  // sola aliquota si costruisce qui una variante con la seconda aliquota al 35%,
+  // come era prima della L. 199/2025: il risparmio massimo è 2% × 22.000 = 440 €.
+  const cfgIbrida = {
+    ...cfg2026,
+    irpef: {
+      ...cfg2026.irpef,
+      scaglioni: [
+        { fino: 28000, aliquota: 0.23 },
+        { fino: 50000, aliquota: 0.35 },
+        { fino: Infinity, aliquota: 0.43 },
+      ],
+    },
+  };
   for (const ral of [35000, 55000, 80000, 150000]) {
     const a = calcola(ral, cfgIbrida).nettoAnnuo;
     const b = calcola(ral, cfg2026).nettoAnnuo;
@@ -225,25 +225,41 @@ test("il beneficio del solo taglio IRPEF non supera i 440 € teorici", () => {
   assert.ok(Math.abs(pieno - 440) < 1e-6, `atteso 440 €, ottenuto ${pieno.toFixed(2)}`);
 });
 
-test("il taglio IRPEF non cambia nulla sotto i 28.000 € di imponibile", () => {
-  const a = calcola(20000, cfg2025).nettoAnnuo;
-  const b = calcola(20000, cfg2026).nettoAnnuo;
-  assert.ok(Math.abs(a - b) < 1e-9);
+test("la configurazione contiene il solo anno corrente", () => {
+  assert.deepEqual(Object.keys(JetHR.TAX_CONFIG), ["2026"]);
+  assert.equal(JetHR.TAX_CONFIG[2026].anno, 2026);
 });
 
-test("il modello si ferma alla RAL: nessuna voce a carico dell'azienda", () => {
-  // Il costo del lavoro sta sopra la RAL e non è una trattenuta al lordo:
-  // è fuori dal perimetro dichiarato del calcolatore.
-  const r = calcola(35000);
-  assert.equal(r.costoAzienda, undefined);
-  assert.ok(!r.steps.some((s) => /azienda|datore|TFR/i.test(s.label)),
-    "il breakdown non deve contenere voci a carico dell'azienda");
-  assert.equal(r.steps[0].id, "ral", "la catena parte dalla RAL");
+test("costo azienda = RAL + contributi c/azienda + accantonamento TFR", () => {
+  for (const ral of RAL_CAMPIONE) {
+    const r = calcola(ral);
+    const atteso = ral + r.costoAzienda.contributiDatore + r.costoAzienda.accantonamentoTfr;
+    assert.ok(Math.abs(r.costoAzienda.costoTotale - atteso) < 1e-9, `RAL ${ral}`);
+    assert.ok(r.costoAzienda.costoTotale > ral, `RAL ${ral}: il costo azienda deve superare la RAL`);
+  }
+});
+
+test("costo azienda: i contributi c/datore si fermano al massimale, l'INAIL no", () => {
+  const oltre = calcola(cfg2026.inps.massimaleAnnuo * 2);
+  const al = calcola(cfg2026.inps.massimaleAnnuo);
+  assert.ok(Math.abs(oltre.costoAzienda.contributiInpsDatore - al.costoAzienda.contributiInpsDatore) < 1e-9,
+    "i contributi INPS c/datore non devono crescere oltre il massimale");
+  assert.ok(oltre.costoAzienda.premioInail > al.costoAzienda.premioInail,
+    "il premio INAIL non è soggetto al massimale");
+});
+
+test("il cuneo sul costo azienda sta fra l'aliquota media e il 100%", () => {
+  for (const ral of RAL_CAMPIONE) {
+    const r = calcola(ral);
+    assert.ok(r.cuneoFiscale > r.aliquotaMediaEffettiva, `RAL ${ral}: il cuneo deve superare l'aliquota media`);
+    assert.ok(r.cuneoFiscale < 1, `RAL ${ral}: cuneo oltre il 100%`);
+  }
 });
 
 test("il breakdown espone ogni voce con formula e riferimento normativo", () => {
   const r = calcola(35000);
   assert.deepEqual(r.steps.map((s) => s.id), [
+    "costo-azienda", "contributi-datore", "tfr",
     "ral", "contributi-dipendente", "imponibile", "irpef-lorda", "detrazione-lavoro",
     "ulteriore-detrazione", "irpef-netta", "add-regionale", "add-comunale",
     "trattamento-integrativo", "somma-integrativa", "netto",
@@ -260,9 +276,8 @@ test("il breakdown espone ogni voce con formula e riferimento normativo", () => 
 test("ogni anno in configurazione è completo", () => {
   for (const anno of Object.keys(JetHR.TAX_CONFIG)) {
     const c = JetHR.TAX_CONFIG[anno];
-    assert.equal(c.tfr, undefined, `anno ${anno}: config TFR residua dopo la rimozione del costo azienda`);
     for (const chiave of [
-      "inps", "irpef", "detrazioneLavoroDipendente", "sommaIntegrativa",
+      "inps", "tfr", "irpef", "detrazioneLavoroDipendente", "sommaIntegrativa",
       "ulterioreDetrazione", "trattamentoIntegrativo", "addizionaleRegionale", "addizionaleComunale",
     ]) {
       assert.ok(c[chiave], `anno ${anno}: manca la sezione ${chiave}`);

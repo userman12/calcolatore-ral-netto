@@ -41,6 +41,8 @@
    e che vanno controllati prima di qualunque uso reale (elenco completo nel README).
 ============================================================================= */
 
+const ANNO_CORRENTE = 2026;
+
 const TAX_CONFIG = {
 
   2026: {
@@ -69,6 +71,28 @@ const TAX_CONFIG = {
       // privi di anzianità contributiva al 31/12/1995.
       massimaleAnnuo: 122295, // € — Circolare INPS n. 6 del 30/01/2026
       fonteMassimale: "Circolare INPS n. 6 del 30/01/2026 — massimale annuo base contributiva 2026",
+
+      // Contribuzione a carico del datore di lavoro. Varia sensibilmente per
+      // CCNL, dimensione aziendale, qualifica. Default: terziario/commercio
+      // con meno di 50 dipendenti (38,17% totale − 9,19% lavoratore = 28,98%).
+      aliquotaDatore: 0.2898,
+      fonteAliquotaDatore: "Aliquota contributiva complessiva 38,17% (terziario/commercio < 50 dipendenti), al netto del 9,19% c/lavoratore",
+      verificaAliquotaDatore: true,
+
+      // Premio INAIL: dipende dalla voce di tariffa della PAT aziendale.
+      // Per impiegato amministrativo il tasso è tipicamente molto basso.
+      aliquotaInail: 0.004,
+      fonteInail: "Tasso medio ipotizzato per impiegato amministrativo — dipende dalla voce di tariffa INAIL della singola PAT",
+      verificaInail: true,
+    },
+
+    // -------------------------------------------------------------------------
+    // TFR
+    // -------------------------------------------------------------------------
+    tfr: {
+      divisore: 13.5,                 // art. 2120 c.c. — quota annua = retribuzione / 13,5
+      contributoFondoGaranzia: 0.005, // 0,50% dell'imponibile previdenziale, a riduzione della quota accantonata
+      fonte: "art. 2120 c.c. (quota = retribuzione utile / 13,5); contributo 0,50% al Fondo di garanzia INPS (art. 3 L. 297/1982)",
     },
 
     // -------------------------------------------------------------------------
@@ -204,82 +228,7 @@ const TAX_CONFIG = {
       fonte: "Delibera comunale Milano — aliquota 0,80%, esenzione fino a 23.000 € di imponibile",
       verificare: true,
     },
-  },
-
-  // ---------------------------------------------------------------------------
-  // 2025 — anno precedente, utile per confrontare l'effetto del taglio IRPEF.
-  // I parametri INPS 2025 sono ricostruiti e NON verificati su circolare.
-  // ---------------------------------------------------------------------------
-  2025: {
-    anno: 2025,
-    etichetta: "2025",
-    inps: {
-      aliquotaDipendente: 0.0919,
-      fonteAliquotaDipendente: "Aliquota IVS c/lavoratore, tabelle contributive INPS",
-      aliquotaAggiuntiva: 0.01,
-      primaFasciaPensionabile: 55008,
-      fontePrimaFascia: "Prima fascia di retribuzione pensionabile 2025 (circolare INPS annuale)",
-      verificaPrimaFascia: true,
-      massimaleAnnuo: 120607,
-      fonteMassimale: "Massimale annuo base contributiva 2025 (circolare INPS annuale)",
-      verificaMassimale: true,
-    },
-    irpef: {
-      scaglioni: [
-        { fino: 28000,    aliquota: 0.23 },
-        { fino: 50000,    aliquota: 0.35 },
-        { fino: Infinity, aliquota: 0.43 },
-      ],
-      fonte: "art. 11 TUIR, testo vigente nel 2025 (tre scaglioni 23/35/43)",
-      sogliaNeutralizzazioneBeneficio: Infinity,
-    },
-    detrazioneLavoroDipendente: {
-      fasce: [
-        { fino: 15000,    formula: (R) => 1955,                                  descrizione: "Importo fisso 1.955 €", espressione: "1.955" },
-        { fino: 28000,    formula: (R) => 1910 + 1190 * ((28000 - R) / 13000),   descrizione: "Decrescente",           espressione: "1.910 + 1.190 × (28.000 − R) / 13.000" },
-        { fino: 50000,    formula: (R) => 1910 * ((50000 - R) / 22000),          descrizione: "Decrescente",           espressione: "1.910 × (50.000 − R) / 22.000" },
-        { fino: Infinity, formula: (R) => 0,                                     descrizione: "Nessuna detrazione",    espressione: "0" },
-      ],
-      minimoTempoIndeterminato: 690,
-      fonte: "art. 13 c. 1 TUIR, importi D.Lgs. 216/2023",
-      maggiorazione: { importo: 65, da: 25000, a: 35000, fonte: "art. 13 c. 1-bis TUIR", verificare: true },
-    },
-    sommaIntegrativa: {
-      sogliaRedditoComplessivo: 20000,
-      fasce: [
-        { fino: 8500,  percentuale: 0.071 },
-        { fino: 15000, percentuale: 0.053 },
-        { fino: 20000, percentuale: 0.048 },
-      ],
-      fonte: "L. 207/2024 art. 1 cc. 4-5",
-    },
-    ulterioreDetrazione: {
-      fasce: [
-        { da: 20000, a: 32000, formula: () => 1000,                         espressione: "1.000" },
-        { da: 32000, a: 40000, formula: (R) => 1000 * ((40000 - R) / 8000), espressione: "1.000 × (40.000 − R) / 8.000" },
-      ],
-      fonte: "L. 207/2024 art. 1 c. 6",
-    },
-    trattamentoIntegrativo: {
-      importoMassimo: 1200, sogliaPiena: 15000, sogliaMassima: 28000, abbattimentoCapienza: 75,
-      fonte: "D.L. 3/2020 art. 1",
-    },
-    addizionaleRegionale: {
-      regione: "Lombardia",
-      scaglioni: [
-        { fino: 15000,    aliquota: 0.0123 },
-        { fino: 28000,    aliquota: 0.0158 },
-        { fino: 50000,    aliquota: 0.0172 },
-        { fino: Infinity, aliquota: 0.0173 },
-      ],
-      fonte: "Aliquote addizionale regionale Lombardia (MEF)",
-      verificare: true,
-    },
-    addizionaleComunale: {
-      comune: "Milano", aliquota: 0.008, sogliaEsenzione: 23000, esenzioneCliff: true,
-      fonte: "Delibera comunale Milano", verificare: true,
-    },
-  },
+  }
 };
 
 
@@ -351,6 +300,37 @@ function calcolaContributiDipendente(ral, cfg) {
     quotaAggiuntiva,
     totale: quotaBase + quotaAggiuntiva,
     massimaleApplicato: ral > c.massimaleAnnuo,
+  };
+}
+
+/**
+ * Contributi a carico del datore + accantonamento TFR → costo azienda.
+ */
+function calcolaCostoAzienda(ral, cfg) {
+  const c = cfg.inps;
+  const baseContributiva = Math.min(ral, c.massimaleAnnuo);
+
+  const contributiInpsDatore = baseContributiva * c.aliquotaDatore;
+  const premioInail = ral * c.aliquotaInail;
+
+  // TODO: manca la rivalutazione annua del TFR già accantonato (1,5% + 75%
+  // dell'indice ISTAT) e la relativa imposta sostitutiva del 17%. Per farlo bene
+  // servirebbe lo stock di TFR pregresso e la serie storica dell'indice ISTAT:
+  // qui si calcola la sola quota di competenza dell'anno.
+  const quotaTfrLorda = ral / cfg.tfr.divisore;
+  const contributoFondoGaranzia = ral * cfg.tfr.contributoFondoGaranzia;
+  const accantonamentoTfr = quotaTfrLorda - contributoFondoGaranzia;
+
+  const contributiDatore = contributiInpsDatore + premioInail;
+
+  return {
+    contributiInpsDatore,
+    premioInail,
+    contributiDatore,
+    quotaTfrLorda,
+    contributoFondoGaranzia,
+    accantonamentoTfr,
+    costoTotale: ral + contributiDatore + accantonamentoTfr,
   };
 }
 
@@ -485,10 +465,13 @@ function calcolaAddizionaleComunale(imponibile, cfg) {
 function calcolaNetto({ ral, mensilita = 13, config, giorniLavorati = 365 }) {
   const cfg = config;
 
-  // --- 1. Contributi c/dipendente -------------------------------------------
+  // --- 1. Costo azienda ------------------------------------------------------
+  const costoAzienda = calcolaCostoAzienda(ral, cfg);
+
+  // --- 2/3. Contributi c/dipendente -----------------------------------------
   const contributi = calcolaContributiDipendente(ral, cfg);
 
-  // --- 2. Imponibile fiscale -------------------------------------------------
+  // --- 4. Imponibile fiscale -------------------------------------------------
   // I contributi obbligatori sono oneri deducibili (art. 10 TUIR); per il
   // dipendente operano già in busta paga abbattendo l'imponibile.
   // TODO: l'imponibile fiscale ignora fringe benefit oltre soglia, welfare aziendale,
@@ -571,9 +554,45 @@ function calcolaNetto({ ral, mensilita = 13, config, giorniLavorati = 365 }) {
   const nettoMensile = nettoAnnuo / mensilita;
 
   const aliquotaMediaEffettiva = ral > 0 ? (totaleTrattenute - bonusNetti) / ral : 0;
+  const cuneoFiscale =
+    costoAzienda.costoTotale > 0
+      ? (costoAzienda.costoTotale - nettoAnnuo) / costoAzienda.costoTotale
+      : 0;
 
   // --- Breakdown per la UI: catena dall'alto verso il basso -------------------
   const steps = [
+    {
+      id: "costo-azienda",
+      label: "Costo azienda",
+      tipo: "totale",
+      importo: costoAzienda.costoTotale,
+      base: "RAL + contributi c/azienda + accantonamento TFR",
+      formula: `${fmt(ral)} + ${fmt(costoAzienda.contributiDatore)} + ${fmt(costoAzienda.accantonamentoTfr)}`,
+      riferimento: "Somma degli oneri complessivi sostenuti dal datore di lavoro",
+      soloCostoAzienda: true,
+    },
+    {
+      id: "contributi-datore",
+      label: "Contributi c/azienda",
+      tipo: "sottrazione",
+      importo: costoAzienda.contributiDatore,
+      base: `Base contributiva ${fmt(Math.min(ral, cfg.inps.massimaleAnnuo))}`,
+      formula: `INPS ${pct(cfg.inps.aliquotaDatore)} = ${fmt(costoAzienda.contributiInpsDatore)} + INAIL ${pct(cfg.inps.aliquotaInail)} = ${fmt(costoAzienda.premioInail)}`,
+      riferimento: cfg.inps.fonteAliquotaDatore,
+      soloCostoAzienda: true,
+      warning: true,
+    },
+    {
+      id: "tfr",
+      label: "Accantonamento TFR",
+      tipo: "sottrazione",
+      importo: costoAzienda.accantonamentoTfr,
+      base: `RAL ${fmt(ral)}`,
+      formula: `RAL / ${cfg.tfr.divisore} (${fmt(costoAzienda.quotaTfrLorda)}) − ${pct(cfg.tfr.contributoFondoGaranzia)} RAL (${fmt(costoAzienda.contributoFondoGaranzia)})`,
+      riferimento: cfg.tfr.fonte,
+      nota: "Il TFR è accantonato, non erogato: non entra nel netto in busta paga.",
+      soloCostoAzienda: true,
+    },
     {
       id: "ral",
       label: "RAL — Retribuzione Annua Lorda",
@@ -713,6 +732,7 @@ function calcolaNetto({ ral, mensilita = 13, config, giorniLavorati = 365 }) {
   return {
     input: { ral, mensilita, anno: cfg.anno, giorniLavorati },
     contributi,
+    costoAzienda,
     imponibileFiscale,
     redditoComplessivo,
     irpefLorda,
@@ -737,6 +757,7 @@ function calcolaNetto({ ral, mensilita = 13, config, giorniLavorati = 365 }) {
     nettoAnnuo,
     nettoMensile,
     aliquotaMediaEffettiva,
+    cuneoFiscale,
     steps,
   };
 }
@@ -982,8 +1003,8 @@ function KPI({ label, value, sub, accent }) {
   );
 }
 
-function Waterfall({ result, selected, onSelect }) {
-  const steps = result.steps;
+function Waterfall({ result, mostraCostoAzienda, selected, onSelect }) {
+  const steps = result.steps.filter((s) => mostraCostoAzienda || !s.soloCostoAzienda);
   const max = Math.max(...steps.map((s) => s.importo));
 
   const colore = (s) => {
@@ -1008,6 +1029,9 @@ function Waterfall({ result, selected, onSelect }) {
                 <span className={`text-sm ${s.tipo === "totale" ? "font-semibold" : ""}`}>
                   <span className="inline-block w-4 text-slate-400">{segno(s)}</span>
                   {s.label}
+                  {s.warning && (
+                    <span className="ml-1 text-amber-600 text-xs" title="Aliquota che varia per CCNL e classificazione aziendale: valore da verificare">⚠</span>
+                  )}
                 </span>
                 <span className={`text-sm tabular-nums whitespace-nowrap ${s.tipo === "totale" ? "font-semibold" : "text-slate-600"}`}>
                   {fmt(s.importo)}
@@ -1185,24 +1209,24 @@ function TabellaValidazione({ config, mensilita }) {
 }
 
 function App() {
-  const [anno, setAnno] = useState(2026);
   const [ralTesto, ral, setRalTesto] = useCampoNumerico(35000);
   const [mensilita, setMensilita] = useState(13);
   const [selected, setSelected] = useState(null);
   const [modalitaInversa, setModalitaInversa] = useState(false);
+  const [mostraCostoAzienda, setMostraCostoAzienda] = useState(true);
   const [nettoTargetTesto, nettoTarget, setNettoTargetTesto] = useCampoNumerico(2000);
 
-  const config = TAX_CONFIG[anno];
+  const config = TAX_CONFIG[ANNO_CORRENTE];
 
   const inversa = useMemo(() => {
     if (!modalitaInversa) return null;
     return ralDaNettoMensile({ nettoMensileTarget: nettoTarget, mensilita, config });
-  }, [modalitaInversa, nettoTarget, mensilita, anno]);
+  }, [modalitaInversa, nettoTarget, mensilita]);
 
   const ralEffettiva = modalitaInversa && inversa && inversa.trovata ? inversa.ral : ral;
   const result = useMemo(
     () => calcolaNetto({ ral: ralEffettiva, mensilita, config }),
-    [ralEffettiva, mensilita, anno]
+    [ralEffettiva, mensilita]
   );
 
   return (
@@ -1264,17 +1288,21 @@ function App() {
             </select>
           </label>
 
-          <label className="block">
-            <span className="block text-xs font-semibold text-slate-600 mb-1">Anno fiscale</span>
-            <select
-              value={anno} onChange={(e) => setAnno(Number(e.target.value))}
-              className="px-3 py-2 border border-slate-300 rounded-md text-sm bg-white"
-            >
-              {Object.keys(TAX_CONFIG).sort().reverse().map((a) => (
-                <option key={a} value={a}>{a}</option>
-              ))}
-            </select>
+          <label className="flex items-center gap-2 text-sm pb-2">
+            <input
+              type="checkbox" checked={mostraCostoAzienda}
+              onChange={(e) => setMostraCostoAzienda(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            Mostra costo azienda
           </label>
+
+          <div className="pb-2">
+            <span className="block text-xs font-semibold text-slate-600 mb-1">Anno d'imposta</span>
+            <span className="text-sm px-3 py-2 inline-block" title="TAX_CONFIG è indicizzata per anno: aggiungerne uno è una modifica di sola configurazione">
+              {config.etichetta}
+            </span>
+          </div>
         </div>
 
         {modalitaInversa && (
@@ -1286,8 +1314,8 @@ function App() {
                   <div className="text-lg font-bold tabular-nums">{fmt(inversa.ral)}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-slate-500">Imponibile fiscale</div>
-                  <div className="text-lg font-bold tabular-nums">{fmt(result.imponibileFiscale)}</div>
+                  <div className="text-xs text-slate-500">Costo azienda</div>
+                  <div className="text-lg font-bold tabular-nums">{fmt(result.costoAzienda.costoTotale)}</div>
                 </div>
                 <div>
                   <div className="text-xs text-slate-500">Netto mensile ottenuto</div>
@@ -1309,12 +1337,12 @@ function App() {
         <KPI accent label="Netto annuo" value={fmt0(result.nettoAnnuo)} sub={`su RAL ${fmt0(result.input.ral)}`} />
         <KPI accent label="Netto mensile" value={fmt0(result.nettoMensile)} sub={`${mensilita} mensilità`} />
         <KPI label="Totale trattenute" value={fmt0(result.totaleTrattenute - result.bonusNetti)} sub="contributi + imposte − bonus" />
-        <KPI label="Aliquota media effettiva" value={pct(result.aliquotaMediaEffettiva, 1)} sub="trattenute nette sulla RAL" />
+        <KPI label="Aliquota media effettiva" value={pct(result.aliquotaMediaEffettiva, 1)} sub={`cuneo sul costo azienda ${pct(result.cuneoFiscale, 1)}`} />
       </div>
 
       {/* WATERFALL */}
       <Card title="Dal costo azienda al netto — clicca una voce per il dettaglio">
-        <Waterfall result={result} selected={selected} onSelect={setSelected} />
+        <Waterfall result={result} mostraCostoAzienda={mostraCostoAzienda} selected={selected} onSelect={setSelected} />
       </Card>
 
       {/* GRAFICO */}
