@@ -70,10 +70,55 @@ test("i decimali che iniziano per zero non vengono mutilati", () => {
   assert.equal(normalizza("0.05"), "0.05");
 });
 
-test("valori negativi o non numerici sono letti come 0 senza rompere il campo", () => {
-  assert.equal(valore("-100"), 0);
-  assert.equal(valore("abc"), 0);
-  assert.equal(normalizza("abc"), "abc", "la normalizzazione non riscrive il campo");
+test("la virgola è accettata come separatore decimale", () => {
+  assert.equal(normalizza("1500,50"), "1500,50", "la virgola digitata resta visibile");
+  assert.equal(valore("1500,50"), 1500.5);
+  assert.equal(valore("0,5"), 0.5);
+});
+
+test("un solo separatore decimale: vince il primo digitato", () => {
+  assert.equal(normalizza("1.5.7"), "1.57");
+  assert.equal(normalizza("1,5,7"), "1,57");
+  assert.equal(normalizza("1.5,7"), "1.57");
+});
+
+// --- Regressione segnalata: si potevano scrivere lettere nel campo RAL --------
+
+test("regressione: le lettere non entrano nel campo", () => {
+  assert.equal(normalizza("abc"), "");
+  assert.equal(normalizza("35000abc"), "35000");
+  assert.equal(normalizza("35a0b0c0"), "35000");
+});
+
+test("regressione: la notazione scientifica è rifiutata", () => {
+  assert.equal(normalizza("e"), "", "la e dell'esponente non deve entrare");
+  assert.equal(normalizza("1e"), "1");
+  assert.equal(normalizza("35E5"), "355", "la E cade, restano le sole cifre");
+  assert.ok(!/e/i.test(normalizza("1e5")), "nessuna e sopravvive alla normalizzazione");
+});
+
+test("segni e simboli non entrano: il campo accetta solo positivi", () => {
+  assert.equal(normalizza("-100"), "100", "il meno cade, non si digita un negativo");
+  assert.equal(normalizza("+100"), "100");
+  assert.equal(normalizza("€ 35.000"), "35.000", "simbolo di valuta e spazio cadono");
+  assert.equal(normalizza("35 000"), "35000", "gli spazi cadono");
+  assert.ok(valore(normalizza("-100")) > 0, "non esistono valori negativi nel campo");
+});
+
+test("limite noto: il separatore delle migliaia non è supportato", () => {
+  // Documenta il TODO in index.html: "1.500" è letto come 1,5 e non come 1500.
+  // Il test esiste per rendere il limite visibile, non per approvarlo.
+  assert.equal(valore(normalizza("1.500")), 1.5);
+  assert.equal(valore(normalizza("1500")), 1500);
+});
+
+test("nessuna sequenza di caratteri produce un valore negativo o non finito", () => {
+  const casi = ["-1", "-0.5", "e", "1e999", "Infinity", "NaN", "--5", "1-2", "", ".", ",", "abc", "1e-5"];
+  for (const c of casi) {
+    const v = valore(normalizza(c));
+    assert.ok(Number.isFinite(v), `"${c}" produce un valore non finito: ${v}`);
+    assert.ok(v >= 0, `"${c}" produce un valore negativo: ${v}`);
+  }
 });
 
 test("una digitazione normale attraversa stati coerenti", () => {

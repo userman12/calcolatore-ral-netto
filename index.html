@@ -1037,18 +1037,43 @@ const { useState, useMemo } = React;
  * uno stato legittimo durante la digitazione e viene letto come 0 solo dal
  * motore di calcolo.
  */
+/**
+ * Riduce il testo digitato a un numero reale positivo.
+ *
+ * I campi sono type="text" e non type="number" di proposito: un input numerico
+ * accetta la notazione scientifica ("1e5"), il segno e il "+", e soprattutto
+ * quando il contenuto è invalido espone value="" pur continuando a mostrare a
+ * schermo quello che l'utente ha scritto. Testo visibile e stato divergono, e
+ * il campo diventa incontrollabile. Sanificando qui, ciò che si vede è sempre
+ * ciò che c'è nello stato.
+ */
 function normalizzaInputNumerico(grezzo) {
-  // L'input type="number" scarta già i caratteri non numerici; qui resta da
-  // togliere gli zeri iniziali, che altrimenti restano incollati davanti alle
-  // cifre digitate dopo. Il lookahead protegge lo "0" isolato e i decimali
-  // come "0.5", che non vanno toccati.
-  return grezzo.replace(/^0+(?=\d)/, "");
+  // Restano solo cifre e separatori decimali: via lettere (compresa la "e"
+  // dell'esponente), segni, spazi e simboli di valuta.
+  let t = String(grezzo).replace(/[^\d.,]/g, "");
+
+  // Un solo separatore decimale: vince il primo digitato, gli altri cadono.
+  // (I separatori delle migliaia non sono supportati: vedi TODO più sotto.)
+  const primo = t.search(/[.,]/);
+  if (primo !== -1) {
+    t = t.slice(0, primo + 1) + t.slice(primo + 1).replace(/[.,]/g, "");
+  }
+
+  // Niente zeri iniziali incollati davanti alle cifre. Il lookahead protegge
+  // lo "0" isolato e i decimali come "0,5".
+  return t.replace(/^0+(?=\d)/, "");
 }
+
+// TODO: non è gestito il separatore delle migliaia. "1.500" viene letto come
+// millecinquecento millesimi, non come 1500. Per farlo bene servirebbe la
+// formattazione live del campo secondo il locale it-IT, con la posizione del
+// cursore preservata a ogni riscrittura.
 
 function valoreNumerico(testo) {
   // La stringa vuota è uno stato legittimo del campo durante la digitazione:
   // vale 0 per il motore, ma non deve mai riscrivere il contenuto del campo.
-  return testo.trim() === "" ? 0 : Math.max(0, Number(testo) || 0);
+  const n = Number(String(testo).replace(",", "."));
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 function useCampoNumerico(valoreIniziale) {
@@ -1335,7 +1360,7 @@ function App() {
             <label className="block">
               <span className="block text-xs font-semibold text-slate-600 mb-1">RAL annua (€)</span>
               <input
-                type="number" min="0" step="500" inputMode="numeric" value={ralTesto}
+                type="text" inputMode="decimal" autoComplete="off" value={ralTesto}
                 onChange={(e) => setRalTesto(e.target.value)}
                 className="w-40 px-3 py-2 border border-slate-300 rounded-md text-sm tabular-nums"
               />
@@ -1344,7 +1369,7 @@ function App() {
             <label className="block">
               <span className="block text-xs font-semibold text-slate-600 mb-1">Netto mensile desiderato (€)</span>
               <input
-                type="number" min="0" step="50" inputMode="numeric" value={nettoTargetTesto}
+                type="text" inputMode="decimal" autoComplete="off" value={nettoTargetTesto}
                 onChange={(e) => setNettoTargetTesto(e.target.value)}
                 className="w-40 px-3 py-2 border border-slate-300 rounded-md text-sm tabular-nums"
               />
