@@ -60,26 +60,20 @@ test("gli zeri iniziali non restano incollati davanti alle cifre", () => {
 });
 
 test("lo zero isolato resta digitabile", () => {
-  assert.equal(normalizza("0"), "0");
+  assert.equal(normalizza("0"), "0", "deve restare possibile digitare uno 0");
   assert.equal(valore("0"), 0);
+  assert.equal(normalizza("00"), "0", "gli zeri ripetuti collassano in uno");
 });
 
-test("i decimali che iniziano per zero non vengono mutilati", () => {
-  assert.equal(normalizza("0.5"), "0.5");
-  assert.equal(valore("0.5"), 0.5);
-  assert.equal(normalizza("0.05"), "0.05");
-});
-
-test("la virgola è accettata come separatore decimale", () => {
-  assert.equal(normalizza("1500,50"), "1500,50", "la virgola digitata resta visibile");
-  assert.equal(valore("1500,50"), 1500.5);
-  assert.equal(valore("0,5"), 0.5);
-});
-
-test("un solo separatore decimale: vince il primo digitato", () => {
-  assert.equal(normalizza("1.5.7"), "1.57");
-  assert.equal(normalizza("1,5,7"), "1,57");
-  assert.equal(normalizza("1.5,7"), "1.57");
+test("solo euro interi: i separatori cadono, niente decimali", () => {
+  // La RAL si comunica in euro pieni. Senza decimali punti e virgole sono
+  // inequivocabilmente separatori di migliaia, quindi si scartano: sparisce
+  // del tutto l'ambiguità di "1.500" (millecinquecento o uno virgola cinque?).
+  assert.equal(normalizza("1.500"), "1500");
+  assert.equal(normalizza("1,500"), "1500");
+  assert.equal(normalizza("35.000"), "35000");
+  assert.equal(valore(normalizza("1.500")), 1500, "1.500 vale millecinquecento");
+  assert.equal(normalizza("1500,50"), "150050", "i centesimi non sono ammessi");
 });
 
 // --- Regressione segnalata: si potevano scrivere lettere nel campo RAL --------
@@ -100,20 +94,20 @@ test("regressione: la notazione scientifica è rifiutata", () => {
 test("segni e simboli non entrano: il campo accetta solo positivi", () => {
   assert.equal(normalizza("-100"), "100", "il meno cade, non si digita un negativo");
   assert.equal(normalizza("+100"), "100");
-  assert.equal(normalizza("€ 35.000"), "35.000", "simbolo di valuta e spazio cadono");
+  assert.equal(normalizza("€ 35.000"), "35000", "simbolo di valuta, spazio e punto cadono");
   assert.equal(normalizza("35 000"), "35000", "gli spazi cadono");
   assert.ok(valore(normalizza("-100")) > 0, "non esistono valori negativi nel campo");
 });
 
-test("limite noto: il separatore delle migliaia non è supportato", () => {
-  // Documenta il TODO in index.html: "1.500" è letto come 1,5 e non come 1500.
-  // Il test esiste per rendere il limite visibile, non per approvarlo.
-  assert.equal(valore(normalizza("1.500")), 1.5);
-  assert.equal(valore(normalizza("1500")), 1500);
+test("il campo contiene sempre e solo cifre", () => {
+  const casi = ["35000", "-1", "1e5", "€1.500", "12,50", "abc", "0", "", "1..2", "١٢٣"];
+  for (const c of casi) {
+    assert.match(normalizza(c), /^\d*$/, `"${c}" lascia caratteri non numerici nel campo`);
+  }
 });
 
 test("nessuna sequenza di caratteri produce un valore negativo o non finito", () => {
-  const casi = ["-1", "-0.5", "e", "1e999", "Infinity", "NaN", "--5", "1-2", "", ".", ",", "abc", "1e-5"];
+  const casi = ["-1", "-0.5", "e", "1e999", "Infinity", "NaN", "--5", "1-2", "", ".", ",", "abc", "1e-5", "0"];
   for (const c of casi) {
     const v = valore(normalizza(c));
     assert.ok(Number.isFinite(v), `"${c}" produce un valore non finito: ${v}`);

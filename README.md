@@ -9,7 +9,7 @@ italiano a partire dalla RAL, con esplicitazione di tutte le voci trattenute.
 
 ```bash
 open index.html          # nessun build step, nessun backend
-node --test "test/*.test.mjs"   # 27 test sul motore di calcolo
+node --test "test/*.test.mjs"   # 40 test: motore di calcolo e input
 ```
 
 Il prototipo è un singolo file HTML. React, Tailwind e Babel sono caricati da CDN con
@@ -44,10 +44,7 @@ calcolo, formula applicata e riferimento normativo. La UI si limita a renderizza
 ## Catena di calcolo
 
 ```
-Costo azienda        = RAL + contributi c/azienda (INPS + INAIL) + accantonamento TFR
-  − contributi c/azienda
-  − accantonamento TFR                              (TFR / 13,5 − 0,50% al Fondo di garanzia)
-= RAL
+RAL
   − contributi c/dipendente                          9,19% + 1% oltre la prima fascia, entro il massimale
 = Imponibile fiscale
   − IRPEF lorda                                      per scaglioni 23% / 33% / 43%
@@ -64,17 +61,17 @@ Costo azienda        = RAL + contributi c/azienda (INPS + INAIL) + accantonament
 ## Funzionalità
 
 - **Modalità diretta**: RAL → netto annuo e mensile, trattenute, aliquota media effettiva.
-- **Modalità inversa**: netto mensile desiderato → RAL e costo azienda, per ricerca
-  binaria sulla funzione diretta (tolleranza 1 centesimo di RAL, ~40 iterazioni).
-- **Waterfall interattivo** dal costo azienda al netto: ogni voce è cliccabile e mostra
+- **Modalità inversa**: netto mensile desiderato → RAL, per ricerca binaria sulla
+  funzione diretta (tolleranza 1 centesimo di RAL, ~40 iterazioni).
+- **Waterfall interattivo** dalla RAL al netto: ogni voce è cliccabile e mostra
   importo, base di calcolo, formula applicata e riferimento normativo.
 - **Curva dell'aliquota marginale effettiva** da 0 a 100.000 € di RAL, con evidenziazione
   della zona sopra il 100%.
 - **Rilevamento automatico dei cliff**: il motore scandisce la funzione diretta a passi
   di 50 € e individua i punti in cui aumentare la RAL *riduce* il netto. Le soglie non
   sono hardcoded nel grafico: sono derivate dalla config e convertite in RAL.
-- **Pannelli sempre visibili** con assunzioni, limiti espliciti del modello e valori da
-  verificare.
+- **Pannelli sempre visibili** con le assunzioni e l'elenco esplicito di ciò che il
+  modello non copre.
 
 ### Cliff rilevati nel modello 2026
 
@@ -97,19 +94,31 @@ Costo azienda        = RAL + contributi c/azienda (INPS + INAIL) + accantonament
 | 80.000 | 7.590 | 72.410 | 23.336 | 23.336 | 1.735 | 0 | 47.339 | 3.641 | 40,8% |
 
 Scostamenti di poche decine di euro rispetto a un calcolatore ufficiale sono attesi
-(arrotondamenti mensili, base del test di capienza, aliquota datore). Scostamenti
+(arrotondamenti mensili, base del test di capienza). Scostamenti
 maggiori indicano un errore di modello.
+
+## Perimetro
+
+Il calcolatore si ferma alla RAL e guarda verso il basso, come chiede la traccia: netto
+annuo e mensile, e ogni voce trattenuta al lordo. Contributi a carico del datore, INAIL e
+accantonamento TFR stanno *sopra* la RAL e non sono trattenute: sono deliberatamente
+fuori dal modello, che altrimenti dovrebbe poggiare su un'aliquota datoriale variabile
+per CCNL e su un tasso INAIL che dipende dalla singola posizione assicurativa — due
+valori non verificabili a priori, e quindi due numeri inventati a reggere l'intera voce
+più vistosa della pagina.
 
 ## Assunzioni
 
 - Rapporto attivo per l'intero anno (365 giorni): le detrazioni non sono ragguagliate.
 - Unica fonte di reddito, quindi reddito complessivo = reddito di lavoro dipendente.
-- La RAL non comprende il TFR.
+- La RAL non comprende il TFR, che è accantonato e non erogato in busta paga.
 - Le mensilità aggiuntive sono già incluse nella RAL: cambiare il numero di mensilità
   ridistribuisce lo stesso netto annuo, non lo aumenta.
 - Nessun arrotondamento all'unità di euro per periodo di paga: il calcolo è annuale in
   doppia precisione.
 - Addizionali imputate per competenza, non per cassa.
+- Importi in euro interi: la RAL si comunica in euro pieni, i centesimi non cambierebbero
+  nulla di leggibile nel risultato.
 
 ## Cosa il modello NON copre
 
@@ -120,7 +129,8 @@ previdenza complementare · addizionali per cassa e acconto comunale · conguagl
 anno e arrotondamenti mensili · regimi agevolati (impatriati, ricercatori, under 30) ·
 esclusione del massimale contributivo per chi ha anzianità ante 1996 · eventi che
 alterano i giorni retribuiti (CIG, malattia, maternità, congedi) · neutralizzazione del
-taglio IRPEF oltre 200.000 € di reddito complessivo.
+taglio IRPEF oltre 200.000 € di reddito complessivo · costo del lavoro a carico
+dell'azienda.
 
 L'elenco completo con la motivazione di ciascuna esclusione è nel pannello "Cosa il
 modello NON copre" del prototipo.
@@ -132,8 +142,6 @@ numeri accertati.
 
 | Valore | Ipotesi adottata | Dove controllare |
 |---|---|---|
-| Aliquota contributiva c/azienda **28,98%** | Terziario/commercio < 50 dipendenti | Tabelle contributive INPS per CCNL e classificazione effettiva: varia di diversi punti fra industria, commercio e artigianato |
-| Premio INAIL **0,40%** | Tasso medio per impiegato amministrativo | Voce di tariffa della PAT aziendale |
 | Maggiorazione **65 €** art. 13 c. 1-bis, fascia 25.000–35.000 | Confermata per il 2026 | Testo vigente dell'art. 13 c. 1-bis TUIR e istruzioni AdE per l'anno d'imposta 2026 |
 | Scaglioni addizionale regionale Lombardia **1,23 / 1,58 / 1,72 / 1,73%** | Progressivi per scaglioni, invariati nel 2026 | Portale del federalismo fiscale MEF |
 | Addizionale comunale Milano **0,80%**, esenzione **23.000 €** | Esenzione come cliff sull'intero imponibile | Delibera comunale sul Portale del federalismo fiscale: verificare aliquota, soglia e meccanismo (cliff o franchigia) |
@@ -142,8 +150,10 @@ numeri accertati.
 | Cumulabilità di trattamento integrativo, somma integrativa e ulteriore detrazione | Le tre misure sono cumulabili | Circolari AdE sul taglio del cuneo fiscale |
 | Base di calcolo della somma integrativa ≤ 20.000 € | Percentuale sul reddito di lavoro dipendente, soglia di accesso sul reddito complessivo | L. 207/2024 art. 1 cc. 4-5 e circolare interpretativa |
 
-Il pannello equivalente è sempre visibile anche nel prototipo, per non separare mai il
-risultato dai suoi limiti.
+Il prototipo mostra sempre, in fondo alla pagina, le assunzioni e l'elenco di ciò che il
+modello non copre. L'elenco qui sopra vive invece solo nel README: è documentazione di
+metodo per chi legge il codice, non un avviso da mettere sotto gli occhi di chi usa il
+calcolatore.
 
 ## Fonti
 

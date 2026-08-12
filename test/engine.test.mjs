@@ -231,18 +231,23 @@ test("il taglio IRPEF non cambia nulla sotto i 28.000 € di imponibile", () => 
   assert.ok(Math.abs(a - b) < 1e-9);
 });
 
-test("costo azienda = RAL + contributi c/azienda + accantonamento TFR", () => {
-  for (const ral of RAL_CAMPIONE) {
-    const r = calcola(ral);
-    const atteso = ral + r.costoAzienda.contributiDatore + r.costoAzienda.accantonamentoTfr;
-    assert.ok(Math.abs(r.costoAzienda.costoTotale - atteso) < 1e-9);
-    assert.ok(r.costoAzienda.costoTotale > ral);
-  }
+test("il modello si ferma alla RAL: nessuna voce a carico dell'azienda", () => {
+  // Il costo del lavoro sta sopra la RAL e non è una trattenuta al lordo:
+  // è fuori dal perimetro dichiarato del calcolatore.
+  const r = calcola(35000);
+  assert.equal(r.costoAzienda, undefined);
+  assert.ok(!r.steps.some((s) => /azienda|datore|TFR/i.test(s.label)),
+    "il breakdown non deve contenere voci a carico dell'azienda");
+  assert.equal(r.steps[0].id, "ral", "la catena parte dalla RAL");
 });
 
 test("il breakdown espone ogni voce con formula e riferimento normativo", () => {
   const r = calcola(35000);
-  assert.ok(r.steps.length >= 14);
+  assert.deepEqual(r.steps.map((s) => s.id), [
+    "ral", "contributi-dipendente", "imponibile", "irpef-lorda", "detrazione-lavoro",
+    "ulteriore-detrazione", "irpef-netta", "add-regionale", "add-comunale",
+    "trattamento-integrativo", "somma-integrativa", "netto",
+  ], "la catena di calcolo è cambiata");
   for (const s of r.steps) {
     assert.ok(s.label, "voce senza label");
     assert.ok(typeof s.importo === "number" && Number.isFinite(s.importo), `${s.label}: importo non numerico`);
@@ -255,8 +260,9 @@ test("il breakdown espone ogni voce con formula e riferimento normativo", () => 
 test("ogni anno in configurazione è completo", () => {
   for (const anno of Object.keys(JetHR.TAX_CONFIG)) {
     const c = JetHR.TAX_CONFIG[anno];
+    assert.equal(c.tfr, undefined, `anno ${anno}: config TFR residua dopo la rimozione del costo azienda`);
     for (const chiave of [
-      "inps", "tfr", "irpef", "detrazioneLavoroDipendente", "sommaIntegrativa",
+      "inps", "irpef", "detrazioneLavoroDipendente", "sommaIntegrativa",
       "ulterioreDetrazione", "trattamentoIntegrativo", "addizionaleRegionale", "addizionaleComunale",
     ]) {
       assert.ok(c[chiave], `anno ${anno}: manca la sezione ${chiave}`);
