@@ -19,7 +19,7 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const sorgente = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
 
 function estrai(nome) {
-  const re = new RegExp(`function ${nome}\\(grezzo\\)[\\s\\S]*?\\n\\}|function ${nome}\\(testo\\)[\\s\\S]*?\\n\\}`);
+  const re = new RegExp(`function ${nome}\\([^)]*\\)[\\s\\S]*?\\n\\}`);
   const trovata = sorgente.match(re);
   assert.ok(trovata, `funzione ${nome} non trovata in index.html`);
   return new Function(`${trovata[0]}\nreturn ${nome};`)();
@@ -27,6 +27,8 @@ function estrai(nome) {
 
 const normalizza = estrai("normalizzaInputNumerico");
 const valore = estrai("valoreNumerico");
+const su = estrai("passoSu");
+const giu = estrai("passoGiu");
 
 /** Simula una sequenza di stati del campo, come li produce il browser. */
 function digita(sequenza) {
@@ -125,4 +127,44 @@ test("cancellazione progressiva fino al campo vuoto", () => {
   const stati = digita(["35000", "3500", "350", "35", "3", ""]);
   assert.equal(stati.at(-1), "", "l'ultimo backspace non deve lasciare residui");
   assert.deepEqual(stati.map(valore), [35000, 3500, 350, 35, 3, 0]);
+});
+
+// --- Frecce di incremento e decremento ---------------------------------------
+
+test("le frecce si agganciano al multiplo del passo, come un input numerico", () => {
+  // Da un valore già allineato ci si muove di un passo pieno.
+  assert.equal(su(35000, 500), 35500);
+  assert.equal(giu(35000, 500), 34500);
+  // Da un valore disallineato ci si aggancia al multiplo, senza sommare e basta.
+  assert.equal(su(35123, 500), 35500, "35.123 + freccia su deve dare 35.500, non 35.623");
+  assert.equal(giu(35123, 500), 35000, "35.123 + freccia giù deve dare 35.000, non 34.623");
+});
+
+test("il decremento non scende sotto zero", () => {
+  assert.equal(giu(0, 500), 0);
+  assert.equal(giu(200, 500), 0);
+  assert.equal(giu(500, 500), 0);
+  for (let v = 0; v <= 3000; v += 137) {
+    assert.ok(giu(v, 500) >= 0, `valore negativo partendo da ${v}`);
+  }
+});
+
+test("su e giù sono inversi sui valori allineati al passo", () => {
+  for (let v = 0; v <= 100000; v += 500) {
+    assert.equal(giu(su(v, 500), 500), v, `andata e ritorno non torna da ${v}`);
+  }
+});
+
+test("le frecce producono sempre un valore digitabile nel campo", () => {
+  for (const v of [0, 1, 499, 500, 35123, 99999]) {
+    for (const n of [su(v, 500), giu(v, 500)]) {
+      assert.equal(normalizza(String(n)), String(n), `${n} non sopravvive alla normalizzazione`);
+      assert.equal(valore(String(n)), n);
+    }
+  }
+});
+
+test("il passo del netto mensile è più fine di quello della RAL", () => {
+  assert.equal(su(2000, 50), 2050);
+  assert.equal(giu(2000, 50), 1950);
 });

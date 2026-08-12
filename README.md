@@ -9,7 +9,7 @@ italiano a partire dalla RAL, con esplicitazione di tutte le voci trattenute.
 
 ```bash
 open index.html          # nessun build step, nessun backend
-node --test "test/*.test.mjs"   # 41 test: motore di calcolo e input
+node --test "test/*.test.mjs"   # 46 test: motore di calcolo e input
 ```
 
 Il prototipo è un singolo file HTML. React, Tailwind e Babel sono caricati da CDN con
@@ -77,8 +77,10 @@ Costo azienda        = RAL + contributi c/azienda (INPS + INAIL) + accantonament
 - **Rilevamento automatico dei cliff**: il motore scandisce la funzione diretta a passi
   di 50 € e individua i punti in cui aumentare la RAL *riduce* il netto. Le soglie non
   sono hardcoded nel grafico: sono derivate dalla config e convertite in RAL.
-- **Pannelli sempre visibili** con le assunzioni e l'elenco esplicito di ciò che il
-  modello non copre.
+- **Campi con incremento e decremento** (passo 500 € sulla RAL, 50 € sul netto mensile),
+  agganciati al multiplo del passo come le frecce di un input numerico, da mouse o da
+  tastiera con ↑ e ↓.
+- **Pannello delle assunzioni** sempre visibile sotto il risultato.
 
 ### Cliff rilevati nel modello 2026
 
@@ -143,8 +145,9 @@ alterano i giorni retribuiti (CIG, malattia, maternità, congedi) · neutralizza
 taglio IRPEF oltre 200.000 € di reddito complessivo · rivalutazione annua del TFR già
 accantonato.
 
-L'elenco completo con la motivazione di ciascuna esclusione è nel pannello "Cosa il
-modello NON copre" del prototipo.
+Questo elenco vive nel README e non nel prototipo: le assunzioni del modello sono sotto
+gli occhi di chi usa il calcolatore, la casistica di ciò che resta fuori serve a chi
+valuta il codice.
 
 ## DA VERIFICARE
 

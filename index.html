@@ -904,24 +904,8 @@ const ASSUNZIONI = [
   "La RAL è al lordo delle sole trattenute obbligatorie e NON comprende il TFR.",
   "Le mensilità aggiuntive (13ª/14ª) sono già incluse nella RAL: cambiare il numero di mensilità ridistribuisce lo stesso netto annuo, non lo aumenta.",
   "Nessun arrotondamento all'unità di euro per periodo di paga: il calcolo è annuale in doppia precisione.",
-];
-
-const NON_COPERTO = [
-  { voce: "Detrazioni per carichi di famiglia (art. 12 TUIR)", perche: "Coniuge, figli e altri familiari a carico modificano sia l'IRPEF netta sia il test di capienza del trattamento integrativo." },
-  { voce: "Assegno Unico Universale", perche: "Erogazione INPS fuori busta paga, non è reddito imponibile ma incide sul reddito disponibile reale." },
-  { voce: "Fringe benefit e auto aziendale", perche: "Concorrono all'imponibile fiscale e contributivo oltre la soglia di esenzione annua." },
-  { voce: "Welfare aziendale e flexible benefit", perche: "Non concorrono a formare reddito: abbassano l'imponibile a parità di valore erogato." },
-  { voce: "Premi di risultato a tassazione sostitutiva", perche: "Imposta sostitutiva agevolata su una quota di retribuzione variabile, in luogo dell'IRPEF ordinaria." },
-  { voce: "Detassazione di straordinari, notturni, festivi e nuove misure L. 199/2025", perche: "Regimi sostitutivi su singole voci retributive, con soglie e requisiti reddituali propri." },
-  { voce: "Specificità di CCNL", perche: "Numero di mensilità, elementi retributivi, contribuzione a fondi (Est, Metasalute, Previndai...) e aliquote datore variano per contratto." },
-  { voce: "Previdenza complementare e fondi sanitari", perche: "I contributi del lavoratore sono deducibili entro un plafond annuo: riducono l'imponibile IRPEF." },
-  { voce: "Addizionali per competenza vs per cassa", perche: "Nel modello sono imputate all'anno di competenza; in busta paga il saldo dell'anno N si trattiene nell'anno N+1 e l'acconto comunale segue regole proprie." },
-  { voce: "Conguaglio di fine anno e arrotondamenti mensili", perche: "Il calcolo reale avviene mese per mese con arrotondamenti e viene rettificato a dicembre." },
-  { voce: "Regimi agevolati (impatriati, ricercatori, under 30, ZES)", perche: "Abbattono l'imponibile fiscale in misura rilevante e hanno requisiti soggettivi complessi." },
-  { voce: "Massimale contributivo per i soli nuovi iscritti post 1995", perche: "Il modello applica sempre il massimale, ma per chi ha anzianità contributiva ante 1996 non si applica." },
-  { voce: "Costo del lavoro a carico dell'azienda", perche: "Contributi c/datore, INAIL e accantonamento TFR stanno sopra la RAL e non sono trattenute al lordo: fuori dal perimetro di questo calcolatore, che guarda alla busta paga del dipendente." },
-  { voce: "Cassa integrazione, malattia, maternità, congedi", perche: "Alterano imponibile e giorni retribuiti, e con essi il ragguaglio delle detrazioni." },
-  { voce: "Neutralizzazione del taglio IRPEF oltre 200.000 € di reddito", perche: "La L. 199/2025 recupera il beneficio dell'aliquota al 33% riducendo le detrazioni: non implementato." },
+  "Importi in euro interi: le retribuzioni si comunicano in euro pieni.",
+  "L'elenco completo di ciò che il modello non copre — carichi di famiglia, fringe benefit, welfare, premi di risultato, regimi agevolati, conguaglio di fine anno — è nel README del progetto.",
 ];
 
 const RAL_VALIDAZIONE = [20000, 35000, 55000, 80000];
@@ -975,6 +959,20 @@ function valoreNumerico(testo) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+/**
+ * Incremento e decremento con la stessa semantica di un input type="number":
+ * il valore si aggancia al multiplo del passo, non ci si limita a sommare.
+ * Da 35.123 con passo 500 si sale a 35.500 e si scende a 35.000, non a 35.623
+ * e 34.623.
+ */
+function passoSu(valore, passo) {
+  return (Math.floor(valore / passo) + 1) * passo;
+}
+
+function passoGiu(valore, passo) {
+  return Math.max(0, (Math.ceil(valore / passo) - 1) * passo);
+}
+
 function useCampoNumerico(valoreIniziale) {
   const [testo, setTesto] = useState(String(valoreIniziale));
   const aggiorna = (grezzo) => setTesto(normalizzaInputNumerico(grezzo));
@@ -982,7 +980,7 @@ function useCampoNumerico(valoreIniziale) {
 }
 
 // Esposte per il test dell'interazione (vedi test/input.test.mjs).
-window.JetHR_UI = { normalizzaInputNumerico, valoreNumerico };
+window.JetHR_UI = { normalizzaInputNumerico, valoreNumerico, passoSu, passoGiu };
 
 function Card({ title, children, className = "" }) {
   return (
@@ -990,6 +988,55 @@ function Card({ title, children, className = "" }) {
       {title && <div className="px-4 py-3 border-b border-slate-200 font-semibold text-sm">{title}</div>}
       <div className="p-4">{children}</div>
     </div>
+  );
+}
+
+/** Cella di un controllo: etichetta e comando hanno sempre la stessa struttura,
+ *  così la riga risulta allineata per costruzione e non per aggiustamenti. */
+function Campo({ label, children }) {
+  return (
+    <div className="flex flex-col">
+      <span className="text-xs font-semibold text-slate-600 mb-1 h-4 leading-4 whitespace-nowrap">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+/** Campo importo con incremento e decremento, come le frecce di un input
+ *  numerico ma senza ereditarne i difetti (notazione scientifica, segno). */
+function CampoImporto({ label, testo, valore, onTesto, passo }) {
+  const vaiA = (n) => onTesto(String(n));
+
+  const daTastiera = (e) => {
+    if (e.key === "ArrowUp") { e.preventDefault(); vaiA(passoSu(valore, passo)); }
+    if (e.key === "ArrowDown") { e.preventDefault(); vaiA(passoGiu(valore, passo)); }
+  };
+
+  return (
+    <Campo label={label}>
+      <div className="flex h-10 rounded-md border border-slate-300 bg-white overflow-hidden focus-within:ring-2 focus-within:ring-slate-400">
+        <button
+          type="button" onClick={() => vaiA(passoGiu(valore, passo))}
+          aria-label={`Diminuisci di ${passo}`} title={`− ${passo}`}
+          className="w-9 shrink-0 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+        >
+          −
+        </button>
+        <input
+          type="text" inputMode="numeric" autoComplete="off" value={testo}
+          onChange={(e) => onTesto(e.target.value)} onKeyDown={daTastiera}
+          aria-label={label}
+          className="w-28 text-center text-sm tabular-nums bg-transparent outline-none"
+        />
+        <button
+          type="button" onClick={() => vaiA(passoSu(valore, passo))}
+          aria-label={`Aumenta di ${passo}`} title={`+ ${passo}`}
+          className="w-9 shrink-0 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+        >
+          +
+        </button>
+      </div>
+    </Campo>
   );
 }
 
@@ -1240,69 +1287,57 @@ function App() {
 
       {/* INPUT */}
       <Card>
-        <div className="flex flex-wrap gap-4 items-end">
-          <div className="flex rounded-md border border-slate-300 overflow-hidden text-sm">
-            <button
-              onClick={() => setModalitaInversa(false)}
-              className={`px-3 py-2 ${!modalitaInversa ? "bg-slate-900 text-white" : "bg-white hover:bg-slate-50"}`}
-            >
-              Da RAL
-            </button>
-            <button
-              onClick={() => setModalitaInversa(true)}
-              className={`px-3 py-2 border-l border-slate-300 ${modalitaInversa ? "bg-slate-900 text-white" : "bg-white hover:bg-slate-50"}`}
-            >
-              Da netto mensile
-            </button>
-          </div>
+        <div className="flex flex-wrap gap-4">
+          <Campo label="Modalità">
+            <div className="flex h-10 rounded-md border border-slate-300 overflow-hidden text-sm">
+              <button
+                type="button" onClick={() => setModalitaInversa(false)}
+                className={`px-3 ${!modalitaInversa ? "bg-slate-900 text-white" : "bg-white hover:bg-slate-50"}`}
+              >
+                Da RAL
+              </button>
+              <button
+                type="button" onClick={() => setModalitaInversa(true)}
+                className={`px-3 border-l border-slate-300 ${modalitaInversa ? "bg-slate-900 text-white" : "bg-white hover:bg-slate-50"}`}
+              >
+                Da netto mensile
+              </button>
+            </div>
+          </Campo>
 
           {!modalitaInversa ? (
-            <label className="block">
-              <span className="block text-xs font-semibold text-slate-600 mb-1">RAL annua (€)</span>
-              <input
-                type="text" inputMode="numeric" autoComplete="off" value={ralTesto}
-                onChange={(e) => setRalTesto(e.target.value)}
-                className="w-40 px-3 py-2 border border-slate-300 rounded-md text-sm tabular-nums"
-              />
-            </label>
+            <CampoImporto
+              label="RAL annua (€)" testo={ralTesto} valore={ral}
+              onTesto={setRalTesto} passo={500}
+            />
           ) : (
-            <label className="block">
-              <span className="block text-xs font-semibold text-slate-600 mb-1">Netto mensile desiderato (€)</span>
-              <input
-                type="text" inputMode="numeric" autoComplete="off" value={nettoTargetTesto}
-                onChange={(e) => setNettoTargetTesto(e.target.value)}
-                className="w-40 px-3 py-2 border border-slate-300 rounded-md text-sm tabular-nums"
-              />
-            </label>
+            <CampoImporto
+              label="Netto mensile desiderato (€)" testo={nettoTargetTesto} valore={nettoTarget}
+              onTesto={setNettoTargetTesto} passo={50}
+            />
           )}
 
-          <label className="block">
-            <span className="block text-xs font-semibold text-slate-600 mb-1">Mensilità</span>
+          <Campo label="Mensilità">
             <select
               value={mensilita} onChange={(e) => setMensilita(Number(e.target.value))}
-              className="px-3 py-2 border border-slate-300 rounded-md text-sm bg-white"
+              className="h-10 px-3 border border-slate-300 rounded-md text-sm bg-white"
             >
               <option value={12}>12</option>
               <option value={13}>13</option>
               <option value={14}>14</option>
             </select>
-          </label>
+          </Campo>
 
-          <label className="flex items-center gap-2 text-sm pb-2">
-            <input
-              type="checkbox" checked={mostraCostoAzienda}
-              onChange={(e) => setMostraCostoAzienda(e.target.checked)}
-              className="rounded border-slate-300"
-            />
-            Mostra costo azienda
-          </label>
-
-          <div className="pb-2">
-            <span className="block text-xs font-semibold text-slate-600 mb-1">Anno d'imposta</span>
-            <span className="text-sm px-3 py-2 inline-block" title="TAX_CONFIG è indicizzata per anno: aggiungerne uno è una modifica di sola configurazione">
-              {config.etichetta}
-            </span>
-          </div>
+          <Campo label="Visualizzazione">
+            <label className="flex h-10 items-center gap-2 text-sm whitespace-nowrap">
+              <input
+                type="checkbox" checked={mostraCostoAzienda}
+                onChange={(e) => setMostraCostoAzienda(e.target.checked)}
+                className="rounded border-slate-300"
+              />
+              Mostra costo azienda
+            </label>
+          </Campo>
         </div>
 
         {modalitaInversa && (
@@ -1356,31 +1391,16 @@ function App() {
       </Card>
 
       {/* ASSUNZIONI E LIMITI */}
-      <div className="grid lg:grid-cols-2 gap-4">
-        <Card title="Assunzioni del modello">
-          <ul className="text-xs space-y-2 text-slate-700">
-            {ASSUNZIONI.map((a, i) => (
-              <li key={i} className="flex gap-2"><span className="text-slate-400">•</span><span>{a}</span></li>
-            ))}
-          </ul>
-        </Card>
+      <Card title="Assunzioni del modello">
+        <ul className="text-xs space-y-2 text-slate-700 sm:columns-2 sm:gap-8">
+          {ASSUNZIONI.map((a, i) => (
+            <li key={i} className="flex gap-2 break-inside-avoid mb-2">
+              <span className="text-slate-400">•</span><span>{a}</span>
+            </li>
+          ))}
+        </ul>
+      </Card>
 
-        <Card title="Cosa il modello NON copre">
-          <ul className="text-xs space-y-2 text-slate-700">
-            {NON_COPERTO.map((n, i) => (
-              <li key={i}>
-                <span className="font-semibold">{n.voce}</span>
-                <span className="text-slate-500"> — {n.perche}</span>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      </div>
-
-      <footer className="text-xs text-slate-400 pb-8">
-        Prototipo a scopo dimostrativo. Non costituisce consulenza fiscale o del lavoro.
-        Motore esposto su <code className="font-mono">window.JetHR</code> per test da console.
-      </footer>
     </div>
   );
 }
