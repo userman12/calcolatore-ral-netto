@@ -149,13 +149,15 @@ const TAX_CONFIG = {
       minimoTempoIndeterminato: 690,
       fonte: "art. 13 c. 1 TUIR, importi come modificati dal D.Lgs. 216/2023",
 
-      // Maggiorazione di 65 € — art. 13 c. 1-bis TUIR
+      // Maggiorazione di 65 € — art. 13 c. 1.1 TUIR.
+      // NB: il comma 1-bis, spesso citato per errore, è stato abrogato
+      // dall'art. 3 c. 1 del D.L. 5 febbraio 2020 n. 3.
+      // Non è ragguagliata al periodo di lavoro nell'anno.
       maggiorazione: {
         importo: 65,
         da: 25000,
         a: 35000,
-        fonte: "art. 13 c. 1-bis TUIR — maggiorazione 65 € per redditi complessivi da 25.000 a 35.000 €",
-        verificare: true,
+        fonte: "art. 13 c. 1.1 TUIR — maggiorazione di 65 € se il reddito complessivo è superiore a 25.000 € ma non a 35.000 €",
       },
     },
 
@@ -171,9 +173,14 @@ const TAX_CONFIG = {
         { fino: 15000, percentuale: 0.053 },
         { fino: 20000, percentuale: 0.048 },
       ],
-      fonte: "L. 207/2024 art. 1 cc. 4-5 (taglio strutturale del cuneo fiscale), confermata per il 2026",
-      // NB: la percentuale si applica al reddito di lavoro dipendente;
-      // la soglia di accesso guarda al reddito complessivo.
+      fonte: "L. 207/2024 art. 1 cc. 4-5, confermata per il 2026; criteri applicativi in circolare Agenzia delle Entrate n. 4/E del 16 maggio 2025",
+      // La soglia di accesso guarda al reddito complessivo; la percentuale si
+      // determina invece sul reddito di lavoro dipendente.
+      // TODO: per i rapporti non annuali la circolare 4/E impone di determinare
+      // la percentuale sul reddito di lavoro dipendente RIPARAMETRATO all'anno
+      // intero, e di applicarla poi al reddito effettivamente percepito. Qui il
+      // rapporto è annuale per assunzione, quindi i due valori coincidono; per
+      // gestire i part-period servirebbero i giorni di lavoro effettivi.
     },
 
     // -------------------------------------------------------------------------
@@ -195,8 +202,11 @@ const TAX_CONFIG = {
       importoMassimo: 1200,
       sogliaPiena: 15000,      // reddito complessivo entro cui spetta l'importo pieno
       sogliaMassima: 28000,    // oltre la quale non spetta nulla
-      abbattimentoCapienza: 75, // la detrazione art. 13 è ridotta di 75 € nel test di capienza
-      fonte: "D.L. 3/2020 art. 1, come modificato dal D.Lgs. 216/2023 e successive conferme",
+      // La riduzione di 75 € si applica alla sola detrazione del primo periodo
+      // dell'art. 13 c. 1 lett. a) TUIR — cioè alla fascia fino a 15.000 € —
+      // e non alle altre: è esattamente dove la applica il motore.
+      abbattimentoCapienza: 75,
+      fonte: "D.L. 3/2020 art. 1; criteri applicativi in circolare Agenzia delle Entrate n. 4/E del 16 maggio 2025",
     },
 
     // -------------------------------------------------------------------------
@@ -211,8 +221,7 @@ const TAX_CONFIG = {
         { fino: 50000,    aliquota: 0.0172 },
         { fino: Infinity, aliquota: 0.0173 },
       ],
-      fonte: "Aliquote addizionale regionale Lombardia (Portale del federalismo fiscale MEF)",
-      verificare: true,
+      fonte: "art. 72 c. 1 L.R. Lombardia 14 luglio 2003 n. 10 — aliquote pubblicate sul Portale del federalismo fiscale MEF (dato 2026 al 28/01/2026)",
     },
 
     // -------------------------------------------------------------------------
@@ -225,7 +234,8 @@ const TAX_CONFIG = {
       aliquota: 0.008,
       sogliaEsenzione: 23000,
       esenzioneCliff: true,
-      fonte: "Delibera comunale Milano — aliquota 0,80%, esenzione fino a 23.000 € di imponibile",
+      fonte: "Delibera del Comune di Milano — aliquota 0,80%, esenzione fino a 23.000 € di imponibile, pubblicata sul Portale del federalismo fiscale MEF",
+      // In assenza di una nuova delibera per il 2026 resta in vigore quella 2025.
       verificare: true,
     },
   }
@@ -839,7 +849,7 @@ function soglieNotevoli(config) {
   add(config.addizionaleComunale.sogliaEsenzione, `soglia esenzione addizionale comunale ${config.addizionaleComunale.comune}`);
   config.irpef.scaglioni.slice(0, -1).forEach((sc, i) =>
     add(sc.fino, `scaglione IRPEF ${pct(sc.aliquota)} → ${pct(config.irpef.scaglioni[i + 1].aliquota)}`));
-  add(config.detrazioneLavoroDipendente.maggiorazione.a, "fine maggiorazione 65 € art. 13 c. 1-bis");
+  add(config.detrazioneLavoroDipendente.maggiorazione.a, "fine maggiorazione 65 € art. 13 c. 1.1");
   add(config.ulterioreDetrazione.fasce[config.ulterioreDetrazione.fasce.length - 1].a, "fine ulteriore detrazione");
   add(config.inps.primaFasciaPensionabile, "inizio contributo aggiuntivo 1%");
 

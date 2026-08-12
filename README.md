@@ -89,7 +89,7 @@ Costo azienda        = RAL + contributi c/azienda (INPS + INAIL) + accantonament
 | ~9.400 € | 8.500 € | somma integrativa 7,1% → 5,3% | −218 € |
 | ~16.550 € | 15.000 € | somma integrativa 5,3% → 4,8% | −96 € |
 | ~25.350 € | 23.000 € | soglia addizionale comunale Milano (cliff, non franchigia) | −154 € |
-| ~38.550 € | 35.000 € | fine maggiorazione 65 € art. 13 c. 1-bis | −45 € |
+| ~38.550 € | 35.000 € | fine maggiorazione 65 € art. 13 c. 1.1 | −45 € |
 
 ## Tabella di validazione
 
@@ -149,21 +149,58 @@ Questo elenco vive nel README e non nel prototipo: le assunzioni del modello son
 gli occhi di chi usa il calcolatore, la casistica di ciò che resta fuori serve a chi
 valuta il codice.
 
+## Verifica delle fonti
+
+Ogni costante è stata riscontrata su fonte primaria dove esiste ed è accessibile.
+
+| Dato | Esito | Fonte |
+|---|---|---|
+| IRPEF 2026: 23% / 33% / 43% | confermato | L. 199/2025 art. 1 c. 3 (Legge di Bilancio 2026) |
+| Detrazione art. 13 c. 1 TUIR: 1.955 · 1.910 + 1.190×(28.000−R)/13.000 · 1.910×(50.000−R)/22.000 | confermato, testo vigente | art. 13 c. 1 TUIR |
+| Maggiorazione 65 € fra 25.000 e 35.000 € | confermato, **citazione corretta** | art. 13 **c. 1.1** TUIR |
+| INPS: prima fascia 56.224 €, massimale 122.295 € | confermato | Circolare INPS n. 6 del 30/01/2026 |
+| Addizionale regionale Lombardia 1,23 / 1,58 / 1,72 / 1,73% per scaglioni | confermato su fonte primaria | art. 72 c. 1 L.R. Lombardia 10/2003, Portale del federalismo fiscale MEF, dato al 28/01/2026 |
+| Somma integrativa 7,1 / 5,3 / 4,8%, soglia sul reddito complessivo | confermato | L. 207/2024 art. 1 cc. 4-5; circolare AdE n. 4/E del 16/05/2025 |
+| Ulteriore detrazione 1.000 € con décalage 32.000–40.000 € | confermato | L. 207/2024 art. 1 c. 6 |
+| Riduzione di 75 € nel test di capienza del trattamento integrativo | confermato, e si applica solo alla detrazione della fascia fino a 15.000 € — che è dove il motore la applica | D.L. 3/2020 art. 1; circolare AdE n. 4/E del 16/05/2025 |
+| Cumulabilità di trattamento integrativo, somma integrativa e ulteriore detrazione | confermata | circolare AdE n. 4/E del 16/05/2025 |
+
+**Un errore trovato e corretto:** la maggiorazione di 65 € era citata come art. 13
+**c. 1-bis**. Il comma 1-bis è stato abrogato dall'art. 3 c. 1 del D.L. 3/2020: la norma
+vigente è il **comma 1.1**. Il calcolo era giusto, sbagliata era la citazione.
+
+## Riscontro dei calcoli
+
+Confronto con calcolatori indipendenti, anno 2026.
+
+| RAL | Motore | Riferimento esterno | Esito |
+|---|---|---|---|
+| 20.000 | contributi 1.838 · imponibile 18.162 · IRPEF netta 1.367 · somma integrativa 872 | 1.838 · 18.162 · 1.366 · 872 | coincide |
+| 35.000 | contributi 3.217 · imponibile 31.784 · IRPEF lorda 7.689 · detrazione 1.647 · add. 455 e 254 · netto 26.032 | 3.217 · 31.784 · 7.689 · 1.647 · 455 e 254 · 26.032 | coincide riga per riga |
+| 55.000 | netto al lordo delle addizionali 36.268 | 36.268 | coincide |
+| 80.000 | netto al lordo delle addizionali 49.074 | 49.209 | differenza spiegata |
+
+La differenza sugli 80.000 € è dovuta al **contributo aggiuntivo dell'1%** sulla quota
+eccedente la prima fascia pensionabile: la fonte di confronto ferma i contributi a
+80.000 × 9,19% = 7.352 €, il motore aggiunge l'1% su 23.776 € e arriva a 7.589,76 €.
+Rifacendo il conto senza quell'1% il motore riproduce 49.209 € al centesimo. Il
+contributo è dovuto per art. 3-ter L. 438/1992 e la soglia è quella della circolare INPS
+n. 6/2026: qui è il riferimento esterno a semplificare, non il motore a sbagliare.
+
+Una seconda fonte su 35.000 € restituisce una detrazione da lavoro dipendente di 1.582 €
+contro i 1.647 € del motore: la differenza è esattamente la maggiorazione di 65 €
+dell'art. 13 c. 1.1, che quella fonte non applica.
+
 ## DA VERIFICARE
 
-Valori che non ho potuto confermare su fonte primaria. Sono ipotesi dichiarate, non
-numeri accertati.
+Cosa resta aperto dopo la verifica. Sono ipotesi dichiarate, non numeri accertati.
 
 | Valore | Ipotesi adottata | Dove controllare |
 |---|---|---|
 | Aliquota contributiva c/azienda **28,98%** | Terziario/commercio < 50 dipendenti | Tabelle contributive INPS per CCNL e classificazione aziendale effettiva: varia di diversi punti fra industria, commercio e artigianato |
 | Premio INAIL **0,40%** | Tasso medio ipotizzato per impiegato amministrativo | Voce di tariffa INAIL della PAT aziendale: il tasso reale può essere molto più basso o più alto |
-| Maggiorazione **65 €** art. 13 c. 1-bis, fascia 25.000–35.000 | Confermata per il 2026 | Testo vigente dell'art. 13 c. 1-bis TUIR e istruzioni AdE per l'anno d'imposta 2026 |
-| Scaglioni addizionale regionale Lombardia **1,23 / 1,58 / 1,72 / 1,73%** | Progressivi per scaglioni, invariati nel 2026 | Portale del federalismo fiscale MEF |
-| Addizionale comunale Milano **0,80%**, esenzione **23.000 €** | Esenzione come cliff sull'intero imponibile | Delibera comunale sul Portale del federalismo fiscale: verificare aliquota, soglia e meccanismo (cliff o franchigia) |
-| Base del test di capienza del trattamento integrativo | Considerata la sola detrazione da lavoro dipendente | D.L. 3/2020 art. 1 c. 2: la norma richiede la somma di più detrazioni (artt. 12, 13, 15 e rate pluriennali) |
-| Cumulabilità di trattamento integrativo, somma integrativa e ulteriore detrazione | Le tre misure sono cumulabili | Circolari AdE sul taglio del cuneo fiscale |
-| Base di calcolo della somma integrativa ≤ 20.000 € | Percentuale sul reddito di lavoro dipendente, soglia di accesso sul reddito complessivo | L. 207/2024 art. 1 cc. 4-5 e circolare interpretativa |
+| Addizionale comunale Milano **0,80%**, esenzione **23.000 €** | Meccanismo a cliff; in assenza di delibera 2026 vale quella 2025 | Delibera del Comune di Milano sul Portale del federalismo fiscale. La pagina ufficiale del Comune risponde 403: il dato è confermato da due fonti secondarie indipendenti ma non da quella primaria |
+| Detrazioni che entrano nel test di capienza del trattamento integrativo, fascia 15.000–28.000 € | Considerata la sola detrazione da lavoro dipendente | D.L. 3/2020 art. 1 c. 2: nella fascia superiore la norma somma più detrazioni (artt. 12, 13, 15 e rate pluriennali). Irrilevante nel caso base senza carichi né oneri |
 
 Il prototipo mostra sempre, in fondo alla pagina, le assunzioni e l'elenco di ciò che il
 modello non copre. L'elenco qui sopra vive invece solo nel README: è documentazione di
@@ -172,19 +209,28 @@ calcolatore.
 
 ## Fonti
 
+**Primarie**
+
+- [Portale del federalismo fiscale MEF — addizionale regionale IRPEF Lombardia](https://www1.finanze.gov.it/finanze2/dipartimentopolitichefiscali/fiscalitalocale/addregirpef/addregirpef.php?reg=10) — scaglioni e aliquote 2026, art. 72 c. 1 L.R. 10/2003
+- [Circolare Agenzia delle Entrate n. 4/E del 16 maggio 2025](https://www.agenziaentrate.gov.it/portale/documents/20143/8410823/Circolare+lavoro+dipendente+LB2025+DD+IRPEF+n.+4+del+16+maggio+2025.pdf/36979eaa-9fc5-a4ec-a7aa-136497c53f91) — somma integrativa, ulteriore detrazione, capienza del trattamento integrativo
+- [Art. 13 TUIR, testo vigente](https://www.brocardi.it/testo-unico-imposte-redditi/titolo-i/capo-i/art13.html) — detrazione per redditi di lavoro dipendente, comma 1 e comma 1.1
+
+**Secondarie**
+
 - [IRPEF 2026: aliquote e scaglioni aggiornati alla Legge di Bilancio 2026](https://fiscomania.com/aliquote-irpef/) — L. 199/2025 art. 1 c. 3, seconda aliquota dal 35% al 33%
 - [IRPEF: aliquota al 33% per redditi tra 28.000 e 50.000 euro](https://www.quotidianopiu.it/dettaglio/13312445/irpef-aliquota-al-33-percento-per-redditi-tra-28000-e-50000-euro) — limite dei 200.000 € e risparmio massimo di 440 €
-- [Detrazioni per redditi da lavoro dipendente: importi e calcolo 2026](https://fiscomania.com/detrazioni-per-redditi-da-lavoro-dipendente/) — formule art. 13 TUIR per fascia
-- [Detrazioni lavoro dipendente 2026: importi e calcolo](https://cafinforma.it/detrazioni-lavoro-dipendente-2026/) — maggiorazione 65 € e ulteriore detrazione
-- [Contributi INPS 2026: stabiliti minimali e massimali](https://www.ecnews.it/lavoro/news-del-giorno/contributi-inps-2026-stabiliti-minimali-massimali/) — circolare INPS n. 6 del 30/01/2026: prima fascia 56.224 €, massimale 122.295 €
-- [Trattamento integrativo 2026: guida completa a requisiti, soglie e calcolo](https://fiscomania.com/trattamento-integrativo-come-funziona/) — test di capienza e cumulabilità
-- [Taglio cuneo fiscale: guida, esempi e FAQ 2026](https://www.fiscoetasse.com/new-rassegna-stampa/1178-taglio-cuneo-fiscale-ecco-le-novita-2025.html) — percentuali 7,1/5,3/4,8% e décalage 32.000–40.000
-- [Addizionale IRPEF 2026 Lombardia](https://www.tuttocalcolo.it/addizionale-irpef/lombardia) e [addizionale comunale Milano](https://www.tuttocalcolo.it/addizionale-irpef/lombardia/milano)
-- [Portale del federalismo fiscale MEF — addizionale regionale Lombardia](https://www1.finanze.gov.it/finanze2/dipartimentopolitichefiscali/fiscalitalocale/addregirpef/addregirpef.php?reg=10) — fonte primaria da consultare per la verifica
+- [Contributi INPS 2026: stabiliti minimali e massimali](https://www.ecnews.it/lavoro/news-del-giorno/contributi-inps-2026-stabiliti-minimali-massimali/) — circolare INPS n. 6 del 30/01/2026
+- [Trattamento integrativo 2026](https://fiscomania.com/trattamento-integrativo-come-funziona/) — requisiti e test di capienza
+- [Addizionale comunale IRPEF Milano](https://www.tuttocalcolo.it/addizionale-irpef/lombardia/milano) — aliquota, soglia e meccanismo a cliff
 
-Fonti secondarie di divulgazione fiscale, non atti normativi. Prima di qualunque uso
-reale i valori vanno riscontrati sui testi di legge, sulle circolari INPS/AdE e sulle
-delibere degli enti locali.
+**Usate per il riscontro dei calcoli**
+
+- [RAL 35.000 € netto 2026](https://www.calcolonetto.it/stipendio-netto-35k/) — dettaglio riga per riga, Milano/Lombardia
+- [Tabella stipendio lordo netto 2026, RAL da 15K a 100K](https://stipendionettocalcolatore.it/tabella-stipendio-lordo-netto-2026/) — netti al lordo delle addizionali
+
+Le fonti secondarie sono di divulgazione fiscale, non atti normativi. Dove la fonte
+primaria è accessibile è quella a fare fede, e in due casi il confronto ha dato ragione
+al motore contro il calcolatore di riferimento.
 
 ---
 
