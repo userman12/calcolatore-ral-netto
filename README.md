@@ -3,6 +3,8 @@
 Prototipo di simulazione della retribuzione netta annuale e mensile di un dipendente
 italiano a partire dalla RAL, con esplicitazione di tutte le voci trattenute.
 
+**Demo: <https://userman12.github.io/calcolatore-ral-netto/>**
+
 ## Come si esegue
 
 ```bash
