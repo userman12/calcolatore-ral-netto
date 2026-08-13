@@ -982,9 +982,6 @@ const ASSUNZIONI = [
   "L'elenco completo di ciò che il modello non copre — carichi di famiglia, fringe benefit, welfare, premi di risultato, regimi agevolati, conguaglio di fine anno — è nel README del progetto.",
 ];
 
-const RAL_VALIDAZIONE = [20000, 35000, 55000, 80000];
-
-
 /* =============================================================================
    (C) UI
 ============================================================================= */
@@ -1288,53 +1285,6 @@ function GraficoMarginale({ config }) {
   );
 }
 
-function TabellaValidazione({ config, mensilita }) {
-  const righe = RAL_VALIDAZIONE.map((ral) => ({ ral, r: calcolaNetto({ ral, mensilita, config }) }));
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="text-left text-slate-500 border-b border-slate-200">
-            <th className="py-2 pr-3 font-semibold">RAL</th>
-            <th className="py-2 pr-3 font-semibold text-right">Contributi</th>
-            <th className="py-2 pr-3 font-semibold text-right">Imponibile</th>
-            <th className="py-2 pr-3 font-semibold text-right">IRPEF lorda</th>
-            <th className="py-2 pr-3 font-semibold text-right">Detrazioni</th>
-            <th className="py-2 pr-3 font-semibold text-right">IRPEF netta</th>
-            <th className="py-2 pr-3 font-semibold text-right">Addiz.</th>
-            <th className="py-2 pr-3 font-semibold text-right">Bonus</th>
-            <th className="py-2 pr-3 font-semibold text-right">Netto anno</th>
-            <th className="py-2 pr-3 font-semibold text-right">Netto/mese</th>
-            <th className="py-2 font-semibold text-right">Aliq. media</th>
-          </tr>
-        </thead>
-        <tbody className="tabular-nums">
-          {righe.map(({ ral, r }) => (
-            <tr key={ral} className="border-b border-slate-100">
-              <td className="py-2 pr-3 font-semibold">{fmt0(ral)}</td>
-              <td className="py-2 pr-3 text-right">{fmt0(r.contributi.totale)}</td>
-              <td className="py-2 pr-3 text-right">{fmt0(r.imponibileFiscale)}</td>
-              <td className="py-2 pr-3 text-right">{fmt0(r.irpefLorda.totale)}</td>
-              <td className="py-2 pr-3 text-right">{fmt0(r.detrazioniTotaliTeoriche)}</td>
-              <td className="py-2 pr-3 text-right">{fmt0(r.irpefNetta)}</td>
-              <td className="py-2 pr-3 text-right">{fmt0(r.addizionali.totale)}</td>
-              <td className="py-2 pr-3 text-right">{fmt0(r.bonusNetti)}</td>
-              <td className="py-2 pr-3 text-right font-semibold">{fmt0(r.nettoAnnuo)}</td>
-              <td className="py-2 pr-3 text-right">{fmt0(r.nettoMensile)}</td>
-              <td className="py-2 text-right">{pct(r.aliquotaMediaEffettiva, 1)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="mt-3 text-xs text-slate-500">
-        Valori su {mensilita} mensilità, anno {config.anno}. Da confrontare con un calcolatore di riferimento:
-        scostamenti di poche decine di euro sono attesi (arrotondamenti mensili, base del trattamento integrativo,
-        aliquote datore); scostamenti superiori indicano un errore di modello.
-      </p>
-    </div>
-  );
-}
-
 function App() {
   const [ralTesto, ral, setRalTesto] = useCampoNumerico(35000);
   const [mensilita, setMensilita] = useState(13);
@@ -1498,11 +1448,6 @@ function App() {
       {/* GRAFICO */}
       <Card title="Aliquota marginale effettiva al variare della RAL (0 – 100.000 €)">
         <GraficoMarginale config={config} />
-      </Card>
-
-      {/* VALIDAZIONE */}
-      <Card title="Tabella di validazione — da confrontare con calcolatori ufficiali">
-        <TabellaValidazione config={config} mensilita={mensilita} />
       </Card>
 
       {/* ASSUNZIONI E LIMITI */}

@@ -101,6 +101,11 @@ dal motore anziché scritti a mano.
   tastiera con ↑ e ↓.
 - **Pannello delle assunzioni** sempre visibile sotto il risultato.
 
+La tabella dei valori campione non è nel prototipo ma qui nel README: serviva a rendere
+possibile il confronto con i calcolatori ufficiali, e quel confronto ormai è stato fatto
+e documentato. Nell'interfaccia sarebbe rumore fra chi usa lo strumento e il suo
+risultato.
+
 ### Cliff rilevati nel modello 2026
 
 | RAL | Imponibile | Causa | Perdita di netto |
@@ -110,9 +115,11 @@ dal motore anziché scritti a mano.
 | ~25.350 € | 23.000 € | soglia addizionale comunale Milano (cliff, non franchigia) | −154 € |
 | ~38.550 € | 35.000 € | fine maggiorazione 65 € art. 13 c. 1.1 | −45 € |
 
-## Tabella di validazione
+## Output di riferimento
 
-2026, 13 mensilità, Milano. Da confrontare con un calcolatore di riferimento.
+Cosa produce il motore, 2026, 13 mensilità, Milano. Serve da riferimento per capire se
+una modifica ha cambiato i risultati; il confronto con l'esterno è nella sezione
+[Riscontro dei calcoli](#riscontro-dei-calcoli).
 
 | RAL | Contributi | Imponibile | IRPEF lorda | IRPEF netta | Addizionali | Bonus | Netto anno | Netto/mese | Aliq. media |
 |---|---|---|---|---|---|---|---|---|---|
@@ -121,9 +128,8 @@ dal motore anziché scritti a mano.
 | 55.000 | 5.055 | 49.946 | 13.682 | 13.677 | 1.167 | 0 | 35.101 | 2.700 | 36,2% |
 | 80.000 | 7.590 | 72.410 | 23.336 | 23.336 | 1.735 | 0 | 47.339 | 3.641 | 40,8% |
 
-Scostamenti di poche decine di euro rispetto a un calcolatore ufficiale sono attesi
-(arrotondamenti mensili, base del test di capienza, aliquota datoriale). Scostamenti
-maggiori indicano un errore di modello.
+Gli stessi valori sono stampati da `node --test "test/*.test.mjs"`, così il riferimento
+non può divergere dal codice senza che se ne accorga qualcuno.
 
 ## Perimetro
 
