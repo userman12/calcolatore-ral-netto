@@ -363,3 +363,46 @@ test("dentro l'intervallo la modalità inversa trova sempre una RAL", () => {
     assert.ok(inv.trovata, `target ${target} non raggiunto pur essendo nell'intervallo`);
   }
 });
+
+// --- Discontinuità favorevoli ------------------------------------------------
+
+test("i salti favorevoli sono reali: il netto cresce più del lordo", () => {
+  const salti = JetHR.trovaSaltiFavorevoli(cfg2026, { da: 0, a: 100000, passo: 50 });
+  assert.ok(salti.length > 0, "atteso almeno un salto favorevole nel modello 2026");
+  for (const s of salti) {
+    const prima = calcola(s.ral - 50).nettoAnnuo;
+    const dopo = calcola(s.ral).nettoAnnuo;
+    assert.ok(dopo - prima > 50, `a RAL ${s.ral} il salto non supera l'aumento di lordo`);
+    assert.ok(Math.abs(dopo - prima - s.guadagno) < 1e-9, `guadagno riportato errato a RAL ${s.ral}`);
+  }
+});
+
+test("il salto più grande è il trattamento integrativo che diventa capiente", () => {
+  const salti = JetHR.trovaSaltiFavorevoli(cfg2026, { da: 0, a: 100000, passo: 50 });
+  const maggiore = salti.reduce((a, b) => (b.guadagno > a.guadagno ? b : a));
+  assert.ok(maggiore.guadagno > 1000, `atteso un salto oltre 1.000 €, trovato ${maggiore.guadagno}`);
+  assert.equal(calcola(maggiore.ral - 50).trattamentoIntegrativo.spetta, false);
+  assert.equal(calcola(maggiore.ral).trattamentoIntegrativo.spetta, true);
+  assert.equal(calcola(maggiore.ral).trattamentoIntegrativo.importo,
+    cfg2026.trattamentoIntegrativo.importoMassimo);
+});
+
+test("salti favorevoli e cliff sono insiemi disgiunti", () => {
+  const salti = JetHR.trovaSaltiFavorevoli(cfg2026, { da: 0, a: 100000, passo: 50 }).map((s) => s.ral);
+  const cliff = JetHR.trovaCliff(cfg2026, { da: 0, a: 100000, passo: 50 }).map((c) => c.ral);
+  for (const r of salti) assert.ok(!cliff.includes(r), `RAL ${r} è insieme cliff e salto favorevole`);
+});
+
+test("ogni salto favorevole cade su una soglia normativa nota", () => {
+  const soglie = JetHR.soglieNotevoli(cfg2026);
+  const salti = JetHR.trovaSaltiFavorevoli(cfg2026, { da: 0, a: 100000, passo: 50 });
+  for (const s of salti) {
+    // Il salto del trattamento integrativo nasce dal test di capienza, che non è
+    // una soglia di reddito ma un confronto fra imposta e detrazione: si verifica
+    // separatamente che sia esattamente lì che il beneficio si attiva.
+    const suSoglia = soglie.some((x) => Math.abs(x.ral - s.ral) < 120);
+    const daCapienza = calcola(s.ral).trattamentoIntegrativo.spetta &&
+                       !calcola(s.ral - 50).trattamentoIntegrativo.spetta;
+    assert.ok(suSoglia || daCapienza, `salto a RAL ${s.ral} non riconducibile ad alcuna regola`);
+  }
+});

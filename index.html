@@ -911,6 +911,7 @@ function soglieNotevoli(config) {
   add(config.addizionaleComunale.sogliaEsenzione, `soglia esenzione addizionale comunale ${config.addizionaleComunale.comune}`);
   config.irpef.scaglioni.slice(0, -1).forEach((sc, i) =>
     add(sc.fino, `scaglione IRPEF ${pct(sc.aliquota)} → ${pct(config.irpef.scaglioni[i + 1].aliquota)}`));
+  add(config.detrazioneLavoroDipendente.maggiorazione.da, "inizio maggiorazione 65 € art. 13 c. 1.1");
   add(config.detrazioneLavoroDipendente.maggiorazione.a, "fine maggiorazione 65 € art. 13 c. 1.1");
   add(config.ulterioreDetrazione.fasce[config.ulterioreDetrazione.fasce.length - 1].a, "fine ulteriore detrazione");
   add(config.inps.primaFasciaPensionabile, "inizio contributo aggiuntivo 1%");
@@ -923,6 +924,24 @@ function soglieNotevoli(config) {
  * Sono i cliff normativi: informazione di prodotto rilevante, perché in quei punti
  * un aumento di stipendio lordo peggiora la busta paga.
  */
+/**
+ * Il caso speculare: i punti in cui il netto cresce PIÙ dell'aumento di lordo che
+ * lo produce. Superare la soglia vale più dell'aumento che la fa superare — a
+ * ~9.000 € di RAL cento euro lordi in più ne portano milletrecento netti, perché
+ * scatta il trattamento integrativo. Per un consulente payroll è informazione
+ * altrettanto utile del cliff, e va cercata con lo stesso metodo.
+ */
+function trovaSaltiFavorevoli(config, { da = 0, a = 100000, passo = 50 } = {}) {
+  const salti = [];
+  let prec = calcolaNetto({ ral: da, mensilita: 12, config }).nettoAnnuo;
+  for (let ral = da + passo; ral <= a; ral += passo) {
+    const n = calcolaNetto({ ral, mensilita: 12, config }).nettoAnnuo;
+    if (n - prec > passo) salti.push({ ral, guadagno: n - prec });
+    prec = n;
+  }
+  return salti;
+}
+
 function trovaCliff(config, { da = 0, a = 100000, passo = 50 } = {}) {
   const cliff = [];
   let prec = calcolaNetto({ ral: da, mensilita: 12, config }).nettoAnnuo;
@@ -960,6 +979,7 @@ window.JetHR = {
   calcolaTrattamentoIntegrativo,
   soglieNotevoli,
   trovaCliff,
+  trovaSaltiFavorevoli,
   limitiRal,
   limitiNettoMensile,
   ralDaImponibile,
@@ -1088,11 +1108,11 @@ function CampoImporto({ label, testo, valore, onTesto, passo, min, max }) {
 
   return (
     <Campo label={label}>
-      <div className="flex h-10 rounded-md border border-slate-300 bg-white overflow-hidden focus-within:ring-2 focus-within:ring-slate-400">
+      <div className="flex h-11 sm:h-10 rounded-md border border-slate-300 bg-white overflow-hidden focus-within:ring-2 focus-within:ring-slate-400">
         <button
           type="button" onClick={() => vaiA(passoGiu(valore, passo))}
           aria-label={`Diminuisci di ${passo}`} title={`− ${passo}`}
-          className="w-9 shrink-0 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+          className="w-11 sm:w-9 shrink-0 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
         >
           −
         </button>
@@ -1100,12 +1120,12 @@ function CampoImporto({ label, testo, valore, onTesto, passo, min, max }) {
           type="text" inputMode="numeric" autoComplete="off" value={testo}
           onChange={(e) => onTesto(e.target.value)} onKeyDown={daTastiera}
           aria-label={label}
-          className="w-28 text-center text-sm tabular-nums bg-transparent outline-none"
+          className="w-28 text-center text-base sm:text-sm tabular-nums bg-transparent outline-none"
         />
         <button
           type="button" onClick={() => vaiA(passoSu(valore, passo))}
           aria-label={`Aumenta di ${passo}`} title={`+ ${passo}`}
-          className="w-9 shrink-0 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+          className="w-11 sm:w-9 shrink-0 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
         >
           +
         </button>
@@ -1200,36 +1220,53 @@ function GraficoMarginale({ config }) {
   const MAX_RAL = 100000;
   const PASSO = 100;
 
-  const { punti, soglie, cliff } = useMemo(() => ({
+  const { punti, soglie, cliff, salti } = useMemo(() => ({
     punti: curvaAliquotaMarginale(config, { da: 0, a: MAX_RAL, passo: PASSO }),
     soglie: soglieNotevoli(config).filter((s) => s.ral <= MAX_RAL),
     cliff: trovaCliff(config, { da: 0, a: MAX_RAL, passo: 50 }),
+    salti: trovaSaltiFavorevoli(config, { da: 0, a: MAX_RAL, passo: 50 }),
   }), [config]);
 
   const W = 720, H = 280, ML = 46, MB = 26, MT = 12, MR = 12;
-  const maxY = Math.max(1.2, ...punti.map((p) => p.marginale));
+
+  // La scala si ferma al 100%. L'altezza dei picchi ai cliff non è una grandezza
+  // economica ma un artefatto del passo di campionamento — a passo 100 € tocca
+  // il 282%, a passo 500 € nemmeno supera il 100% — e lasciarla governare l'asse
+  // schiaccerebbe in fondo al grafico i 997 punti su 1001 che stanno sotto il 61%.
+  // L'entità reale del salto, che invece è indipendente dal campionamento, è
+  // riportata in euro nell'elenco dei cliff qui sotto.
+  const MAX_Y = 1;
   const x = (ral) => ML + (ral / MAX_RAL) * (W - ML - MR);
-  const y = (v) => MT + (1 - v / maxY) * (H - MT - MB);
+  // La curva si clampa sui due lati: oltre il 100% il lordo aggiuntivo riduce il
+  // netto, sotto lo zero lo aumenta più del lordo stesso. Entrambi sono salti
+  // di soglia, entrambi vanno segnalati anziché sfondare il grafico.
+  const y = (v) => MT + (1 - Math.min(Math.max(v, 0), MAX_Y) / MAX_Y) * (H - MT - MB);
 
   const path = punti
     .map((p, i) => `${i === 0 ? "M" : "L"}${x(p.ral).toFixed(1)},${y(p.marginale).toFixed(1)}`)
     .join(" ");
 
-  const ticks = [0, 0.25, 0.5, 0.75, 1.0].filter((t) => t <= maxY);
+  const fuoriScala = punti.filter((p) => p.marginale > MAX_Y);
+  const saltiFavorevoli = punti.filter((p) => p.marginale < 0);
+  const ticks = [0, 0.25, 0.5, 0.75, 1.0];
 
   return (
     <div>
       <div className="overflow-x-auto">
         <svg viewBox={`0 0 ${W} ${H}`} className="w-full min-w-[620px]">
-          {/* banda sopra il 100%: zona in cui il lordo aggiuntivo riduce il netto */}
-          <rect x={ML} y={y(maxY)} width={W - ML - MR} height={Math.max(0, y(1) - y(maxY))} fill="#fee2e2" />
           {ticks.map((t) => (
             <g key={t}>
               <line x1={ML} x2={W - MR} y1={y(t)} y2={y(t)} stroke="#e2e8f0" strokeWidth="1" />
               <text x={ML - 6} y={y(t) + 3} textAnchor="end" fontSize="9" fill="#64748b">{(t * 100).toFixed(0)}%</text>
             </g>
           ))}
-          <line x1={ML} x2={W - MR} y1={y(1)} y2={y(1)} stroke="#f87171" strokeWidth="1" strokeDasharray="4 3" />
+          {/* Sopra: il lordo aggiuntivo riduce il netto. Sotto: lo aumenta di più. */}
+          {fuoriScala.map((p, i) => (
+            <polygon key={`s${i}`} points={`${x(p.ral) - 4},${MT + 7} ${x(p.ral) + 4},${MT + 7} ${x(p.ral)},${MT}`} fill="#e11d48" />
+          ))}
+          {saltiFavorevoli.map((p, i) => (
+            <polygon key={`g${i}`} points={`${x(p.ral) - 4},${H - MB - 7} ${x(p.ral) + 4},${H - MB - 7} ${x(p.ral)},${H - MB}`} fill="#059669" />
+          ))}
           {soglie.map((s, i) => (
             <line key={i} x1={x(s.ral)} x2={x(s.ral)} y1={MT} y2={H - MB} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3 3" />
           ))}
@@ -1244,6 +1281,15 @@ function GraficoMarginale({ config }) {
         Aliquota marginale effettiva: quota dell'euro lordo aggiuntivo che <em>non</em> arriva al lavoratore
         (contributi + IRPEF + addizionali, comprese le perdite di bonus e detrazioni per décalage).
         Le linee tratteggiate verticali sono le soglie normative, calcolate dalla config e convertite in RAL.
+        {fuoriScala.length > 0 && (
+          <> I triangoli rossi in alto segnano i punti in cui la curva supera il 100%: lì un aumento di RAL
+          fa <em>diminuire</em> il netto. L'altezza del picco dipenderebbe dal passo di campionamento,
+          quindi l'entità del salto è riportata in euro qui sotto.</>
+        )}
+        {saltiFavorevoli.length > 0 && (
+          <> I triangoli verdi in basso segnano il caso opposto: superare la soglia vale più
+          dell'aumento che la fa superare.</>
+        )}
       </p>
 
       <div className="mt-3 grid sm:grid-cols-2 gap-4">
@@ -1274,10 +1320,29 @@ function GraficoMarginale({ config }) {
               ))}
             </ul>
           )}
-          <p className="text-xs text-slate-500 mt-2">
-            Rilevati numericamente scandendo la funzione diretta a passi di 50 € di RAL: sono i punti in cui
-            una soglia opera come cliff anziché come décalage graduale. È l'informazione più utile per chi
-            negozia un aumento.
+          <div className="mt-4">
+            <div className="text-[10px] uppercase tracking-wide font-semibold text-emerald-700 mb-1">
+              Salti favorevoli — dove un aumento minimo vale molto di più
+            </div>
+            {salti.length === 0 ? (
+              <p className="text-xs text-slate-500">Nessun salto favorevole in questo intervallo.</p>
+            ) : (
+              <ul className="text-xs space-y-0.5 text-slate-600 tabular-nums">
+                {salti.map((s, i) => (
+                  <li key={i}>
+                    superata la soglia intorno a <span className="font-semibold">{fmt0(s.ral)}</span> di RAL,
+                    il netto annuo guadagna{" "}
+                    <span className="text-emerald-700 font-semibold">{fmt(s.guadagno)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <p className="text-xs text-slate-500 mt-3">
+            Entrambi gli elenchi sono rilevati numericamente scandendo la funzione diretta a passi di 50 €
+            di RAL: sono i punti in cui una soglia opera come salto anziché come décalage graduale. È
+            l'informazione più utile per chi negozia un aumento.
           </p>
         </div>
       </div>
@@ -1337,7 +1402,7 @@ function App() {
       <Card>
         <div className="flex flex-wrap gap-4">
           <Campo label="Modalità">
-            <div className="flex h-10 rounded-md border border-slate-300 overflow-hidden text-sm">
+            <div className="flex h-11 sm:h-10 rounded-md border border-slate-300 overflow-hidden text-sm">
               <button
                 type="button" onClick={() => setModalitaInversa(false)}
                 className={`px-3 ${!modalitaInversa ? "bg-slate-900 text-white" : "bg-white hover:bg-slate-50"}`}
@@ -1370,7 +1435,7 @@ function App() {
           <Campo label="Mensilità">
             <select
               value={mensilita} onChange={(e) => setMensilita(Number(e.target.value))}
-              className="h-10 px-3 border border-slate-300 rounded-md text-sm bg-white"
+              className="h-11 sm:h-10 px-3 border border-slate-300 rounded-md text-base sm:text-sm bg-white"
             >
               <option value={12}>12</option>
               <option value={13}>13</option>
@@ -1379,11 +1444,11 @@ function App() {
           </Campo>
 
           <Campo label="Visualizzazione">
-            <label className="flex h-10 items-center gap-2 text-sm whitespace-nowrap">
+            <label className="flex h-11 sm:h-10 items-center gap-2 text-sm whitespace-nowrap cursor-pointer">
               <input
                 type="checkbox" checked={mostraCostoAzienda}
                 onChange={(e) => setMostraCostoAzienda(e.target.checked)}
-                className="rounded border-slate-300"
+                className="rounded border-slate-300 h-5 w-5 sm:h-4 sm:w-4"
               />
               Mostra costo azienda
             </label>
