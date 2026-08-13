@@ -72,6 +72,14 @@ const TAX_CONFIG = {
       massimaleAnnuo: 122295, // € — Circolare INPS n. 6 del 30/01/2026
       fonteMassimale: "Circolare INPS n. 6 del 30/01/2026 — massimale annuo base contributiva 2026",
 
+      // Minimale di retribuzione giornaliera imponibile: nessuna contribuzione
+      // può essere calcolata su un imponibile inferiore, nemmeno se la
+      // retribuzione contrattuale è più bassa. Pari al 9,5% del trattamento
+      // minimo di pensione FPLD.
+      minimaleGiornaliero: 58.13, // € — Circolare INPS n. 6 del 30/01/2026
+      giorniConvenzionaliAnno: 312, // 26 giorni di paga × 12 mesi
+      fonteMinimale: "Circolare INPS n. 6 del 30/01/2026 — minimale di retribuzione giornaliera 2026",
+
       // Contribuzione a carico del datore di lavoro. Varia sensibilmente per
       // CCNL, dimensione aziendale, qualifica. Default: terziario/commercio
       // con meno di 50 dipendenti (38,17% totale − 9,19% lavoratore = 28,98%).
@@ -773,6 +781,45 @@ function calcolaNetto({ ral, mensilita = 13, config, giorniLavorati = 365 }) {
 }
 
 /**
+ * Intervallo di RAL entro cui il modello è attendibile.
+ *
+ * Non sono limiti estetici: sono i due punti oltre i quali entrano in gioco
+ * regole che il motore non implementa, e quindi oltre i quali il risultato
+ * sarebbe sbagliato in una direzione nota.
+ */
+function limitiRal(cfg) {
+  const minima = cfg.inps.minimaleGiornaliero * cfg.inps.giorniConvenzionaliAnno;
+  const massima = ralDaImponibile(cfg.irpef.sogliaNeutralizzazioneBeneficio, cfg);
+
+  return {
+    minima,
+    massima,
+    motivoMinimo:
+      `Sotto ${fmt(minima)} i contributi non si calcolano più sulla retribuzione effettiva ` +
+      `ma sul minimale di ${fmt(cfg.inps.minimaleGiornaliero)} al giorno per ` +
+      `${cfg.inps.giorniConvenzionaliAnno} giorni. Il modello non lo implementa e ` +
+      `sottostimerebbe i contributi.`,
+    motivoMassimo:
+      `Oltre ${fmt(massima)} il reddito complessivo supera ` +
+      `${fmt(cfg.irpef.sogliaNeutralizzazioneBeneficio)} e scatta la neutralizzazione del ` +
+      `taglio IRPEF prevista dalla L. 199/2025, che il modello non implementa. Il netto ` +
+      `risulterebbe sovrastimato.`,
+    fonteMinimo: cfg.inps.fonteMinimale,
+    fonteMassimo: cfg.irpef.fonte,
+  };
+}
+
+/** Gli stessi limiti, espressi in netto mensile per la modalità inversa. */
+function limitiNettoMensile(cfg, mensilita) {
+  const l = limitiRal(cfg);
+  return {
+    ...l,
+    minima: calcolaNetto({ ral: l.minima, mensilita, config: cfg }).nettoMensile,
+    massima: calcolaNetto({ ral: l.massima, mensilita, config: cfg }).nettoMensile,
+  };
+}
+
+/**
  * MODALITÀ INVERSA — dal netto mensile desiderato alla RAL.
  * Ricerca binaria sulla funzione diretta, che è monotona crescente a tratti
  * (i cliff normativi la rendono non continua: in quei punti la ricerca converge
@@ -826,10 +873,25 @@ function curvaAliquotaMarginale(config, { da = 0, a = 100000, passo = 250 } = {}
  */
 function ralDaImponibile(imponibile, config) {
   const c = config.inps;
-  const ralStimata = imponibile / (1 - c.aliquotaDipendente);
-  if (ralStimata <= c.primaFasciaPensionabile) return ralStimata;
-  return (imponibile - c.primaFasciaPensionabile * c.aliquotaAggiuntiva) /
-         (1 - c.aliquotaDipendente - c.aliquotaAggiuntiva);
+
+  // La curva dei contributi ha tre tratti, e l'inversione deve seguirli tutti:
+  // sotto la prima fascia solo l'aliquota base, in mezzo anche l'1% aggiuntivo,
+  // sopra il massimale i contributi si fermano e il rapporto torna lineare.
+  const contributiAlMassimale =
+    c.massimaleAnnuo * c.aliquotaDipendente +
+    (c.massimaleAnnuo - c.primaFasciaPensionabile) * c.aliquotaAggiuntiva;
+
+  const imponibileAllaPrimaFascia = c.primaFasciaPensionabile * (1 - c.aliquotaDipendente);
+  const imponibileAlMassimale = c.massimaleAnnuo - contributiAlMassimale;
+
+  if (imponibile <= imponibileAllaPrimaFascia) {
+    return imponibile / (1 - c.aliquotaDipendente);
+  }
+  if (imponibile <= imponibileAlMassimale) {
+    return (imponibile - c.primaFasciaPensionabile * c.aliquotaAggiuntiva) /
+           (1 - c.aliquotaDipendente - c.aliquotaAggiuntiva);
+  }
+  return imponibile + contributiAlMassimale;
 }
 
 /**
@@ -898,6 +960,8 @@ window.JetHR = {
   calcolaTrattamentoIntegrativo,
   soglieNotevoli,
   trovaCliff,
+  limitiRal,
+  limitiNettoMensile,
   ralDaImponibile,
 };
 
@@ -1014,8 +1078,11 @@ function Campo({ label, children }) {
 
 /** Campo importo con incremento e decremento, come le frecce di un input
  *  numerico ma senza ereditarne i difetti (notazione scientifica, segno). */
-function CampoImporto({ label, testo, valore, onTesto, passo }) {
-  const vaiA = (n) => onTesto(String(n));
+function CampoImporto({ label, testo, valore, onTesto, passo, min, max }) {
+  // Le frecce non escono mai dall'intervallo supportato; la digitazione sì,
+  // perché bloccare i tasti rende il campo impossibile da correggere. Fuori
+  // intervallo il risultato resta visibile ma accompagnato dall'avviso.
+  const vaiA = (n) => onTesto(String(Math.min(max, Math.max(min, n))));
 
   const daTastiera = (e) => {
     if (e.key === "ArrowUp") { e.preventDefault(); vaiA(passoSu(valore, passo)); }
@@ -1046,6 +1113,9 @@ function CampoImporto({ label, testo, valore, onTesto, passo }) {
           +
         </button>
       </div>
+      <span className="text-[11px] text-slate-500 mt-1 tabular-nums">
+        da {fmt0(min)} a {fmt0(max)}
+      </span>
     </Campo>
   );
 }
@@ -1275,6 +1345,24 @@ function App() {
 
   const config = TAX_CONFIG[ANNO_CORRENTE];
 
+  // I limiti non sono scelte di interfaccia: fuori da questo intervallo il
+  // modello omette regole che cambierebbero il risultato. Si arrotondano
+  // all'euro perché i campi accettano solo interi.
+  const limiti = useMemo(() => {
+    const r = limitiRal(config);
+    const n = limitiNettoMensile(config, mensilita);
+    return {
+      ral: { ...r, min: Math.ceil(r.minima), max: Math.floor(r.massima) },
+      netto: { ...n, min: Math.ceil(n.minima), max: Math.floor(n.massima) },
+    };
+  }, [mensilita]);
+
+  const attivo = modalitaInversa
+    ? { valore: nettoTarget, ...limiti.netto }
+    : { valore: ral, ...limiti.ral };
+  const sottoIlMinimo = attivo.valore > 0 && attivo.valore < attivo.min;
+  const sopraIlMassimo = attivo.valore > attivo.max;
+
   const inversa = useMemo(() => {
     if (!modalitaInversa) return null;
     return ralDaNettoMensile({ nettoMensileTarget: nettoTarget, mensilita, config });
@@ -1319,11 +1407,13 @@ function App() {
             <CampoImporto
               label="RAL annua (€)" testo={ralTesto} valore={ral}
               onTesto={setRalTesto} passo={500}
+              min={limiti.ral.min} max={limiti.ral.max}
             />
           ) : (
             <CampoImporto
               label="Netto mensile desiderato (€)" testo={nettoTargetTesto} valore={nettoTarget}
               onTesto={setNettoTargetTesto} passo={50}
+              min={limiti.netto.min} max={limiti.netto.max}
             />
           )}
 
@@ -1349,6 +1439,21 @@ function App() {
             </label>
           </Campo>
         </div>
+
+        {(sottoIlMinimo || sopraIlMassimo) && (
+          <div className="mt-4 p-3 bg-amber-50 border border-amber-300 rounded text-xs">
+            <div className="font-semibold text-amber-900">
+              Valore fuori dall'intervallo in cui il modello è attendibile
+            </div>
+            <p className="mt-1 text-slate-700">
+              {sottoIlMinimo ? limiti.ral.motivoMinimo : limiti.ral.motivoMassimo}
+            </p>
+            <p className="mt-1 text-slate-500">
+              Fonte della soglia: {sottoIlMinimo ? limiti.ral.fonteMinimo : limiti.ral.fonteMassimo}.
+              Il risultato qui sotto viene comunque calcolato, ma è da considerarsi indicativo.
+            </p>
+          </div>
+        )}
 
         {modalitaInversa && (
           <div className="mt-4 p-3 bg-slate-50 border border-slate-200 rounded text-sm">

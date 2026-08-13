@@ -182,8 +182,12 @@ test("il numero di mensilità ridistribuisce il netto annuo, non lo cambia", () 
   assert.ok(Math.abs(a.nettoMensile * 12 - b.nettoMensile * 14) < 1e-9);
 });
 
-test("conversione imponibile → RAL è esatta e invertibile", () => {
-  for (const imp of [8500, 15000, 20000, 23000, 28000, 35000, 50000, 56224, 90000]) {
+test("conversione imponibile → RAL è esatta e invertibile nei tre regimi", () => {
+  // Sotto la prima fascia, fra prima fascia e massimale, e oltre il massimale:
+  // la curva dei contributi cambia pendenza due volte e l'inversione deve
+  // seguirla, altrimenti sopra il massimale sbaglia di migliaia di euro.
+  for (const imp of [8500, 15000, 20000, 23000, 28000, 35000, 50000, 56224, 90000,
+                     110000, 110396, 150000, 200000, 300000]) {
     const ral = JetHR.ralDaImponibile(imp, cfg2026);
     assert.ok(Math.abs(calcola(ral).imponibileFiscale - imp) < 0.01, `imponibile ${imp}`);
   }
@@ -308,4 +312,54 @@ test("tabella di validazione (output informativo)", () => {
   righe.forEach((r) => console.log("  " + r));
   console.log();
   assert.ok(righe.length === 4);
+});
+
+// --- Limiti di validità del modello ------------------------------------------
+
+test("la RAL minima deriva dal minimale contributivo, non da una scelta arbitraria", () => {
+  const l = JetHR.limitiRal(cfg2026);
+  const atteso = cfg2026.inps.minimaleGiornaliero * cfg2026.inps.giorniConvenzionaliAnno;
+  assert.ok(Math.abs(l.minima - atteso) < 1e-9);
+  assert.ok(l.minima > 0 && l.minima < 25000, `minima fuori scala: ${l.minima}`);
+});
+
+test("la RAL massima è quella che porta il reddito complessivo alla soglia dei 200.000", () => {
+  const l = JetHR.limitiRal(cfg2026);
+  const imponibileAlLimite = calcola(l.massima).imponibileFiscale;
+  assert.ok(Math.abs(imponibileAlLimite - cfg2026.irpef.sogliaNeutralizzazioneBeneficio) < 0.01,
+    `alla RAL massima l'imponibile è ${imponibileAlLimite}`);
+});
+
+test("ogni limite porta con sé la ragione e la fonte", () => {
+  const l = JetHR.limitiRal(cfg2026);
+  for (const chiave of ["motivoMinimo", "motivoMassimo", "fonteMinimo", "fonteMassimo"]) {
+    assert.ok(l[chiave] && l[chiave].length > 20, `${chiave} mancante o troppo scarno`);
+  }
+  assert.match(l.motivoMinimo, /minimale/i);
+  assert.match(l.motivoMassimo, /199\/2025|neutralizzazione/i);
+});
+
+test("i limiti in netto mensile corrispondono a quelli in RAL", () => {
+  for (const mensilita of [12, 13, 14]) {
+    const r = JetHR.limitiRal(cfg2026);
+    const n = JetHR.limitiNettoMensile(cfg2026, mensilita);
+    assert.ok(Math.abs(n.minima - calcola(r.minima, cfg2026, mensilita).nettoMensile) < 1e-9);
+    assert.ok(Math.abs(n.massima - calcola(r.massima, cfg2026, mensilita).nettoMensile) < 1e-9);
+    assert.ok(n.massima > n.minima, `intervallo netto degenere su ${mensilita} mensilità`);
+  }
+});
+
+test("più mensilità abbassano il netto mensile a parità di limiti in RAL", () => {
+  const a = JetHR.limitiNettoMensile(cfg2026, 12);
+  const b = JetHR.limitiNettoMensile(cfg2026, 14);
+  assert.ok(b.massima < a.massima);
+  assert.ok(b.minima < a.minima);
+});
+
+test("dentro l'intervallo la modalità inversa trova sempre una RAL", () => {
+  const n = JetHR.limitiNettoMensile(cfg2026, 13);
+  for (const target of [Math.ceil(n.minima), 2000, 4000, Math.floor(n.massima)]) {
+    const inv = JetHR.ralDaNettoMensile({ nettoMensileTarget: target, mensilita: 13, config: cfg2026 });
+    assert.ok(inv.trovata, `target ${target} non raggiunto pur essendo nell'intervallo`);
+  }
 });

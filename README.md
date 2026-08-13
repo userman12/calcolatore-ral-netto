@@ -9,7 +9,7 @@ italiano a partire dalla RAL, con esplicitazione di tutte le voci trattenute.
 
 ```bash
 open index.html          # nessun build step, nessun backend
-node --test "test/*.test.mjs"   # 46 test: motore di calcolo e input
+node --test "test/*.test.mjs"   # 52 test: motore di calcolo e input
 ```
 
 Il prototipo è un singolo file HTML. React, Tailwind e Babel sono caricati da CDN con
@@ -64,6 +64,23 @@ Costo azienda        = RAL + contributi c/azienda (INPS + INAIL) + accantonament
 = Netto annuo                                        ÷ 12, 13 o 14 mensilità
 ```
 
+## Limiti di validità
+
+Il modello è attendibile fra **18.137 €** e **211.899 €** di RAL. Non sono limiti
+estetici: sono i due punti oltre i quali entrano in gioco regole che il motore non
+implementa, e quindi oltre i quali il risultato sarebbe sbagliato in una direzione nota.
+
+| Limite | Valore | Perché | Fonte |
+|---|---|---|---|
+| Minimo | 18.136,56 € = 58,13 € × 312 giorni | Sotto il minimale di retribuzione giornaliera i contributi non si calcolano più sulla retribuzione effettiva ma sul minimale: il modello sottostimerebbe i contributi | Circolare INPS n. 6 del 30/01/2026 |
+| Massimo | 211.899,62 €, cioè 200.000 € di reddito complessivo | Oltre i 200.000 € scatta la neutralizzazione del taglio IRPEF, che recupera il beneficio dell'aliquota al 33% riducendo le detrazioni: il modello non la implementa e sovrastimerebbe il netto | L. 199/2025 art. 1 c. 3 |
+
+Le frecce dei campi si fermano ai limiti; la digitazione resta libera, perché bloccare i
+tasti rende il campo impossibile da correggere. Fuori intervallo il risultato viene
+comunque calcolato ma è accompagnato dall'avviso che ne spiega la ragione e ne cita la
+fonte. In modalità inversa gli stessi limiti sono espressi in netto mensile, ricavati
+dal motore anziché scritti a mano.
+
 ## Funzionalità
 
 - **Modalità diretta**: RAL → netto annuo e mensile, trattenute, aliquota media effettiva.
@@ -77,6 +94,8 @@ Costo azienda        = RAL + contributi c/azienda (INPS + INAIL) + accantonament
 - **Rilevamento automatico dei cliff**: il motore scandisce la funzione diretta a passi
   di 50 € e individua i punti in cui aumentare la RAL *riduce* il netto. Le soglie non
   sono hardcoded nel grafico: sono derivate dalla config e convertite in RAL.
+- **Limiti di validità espliciti** sui campi, derivati dal minimale contributivo INPS e
+  dalla soglia dei 200.000 € di reddito complessivo.
 - **Campi con incremento e decremento** (passo 500 € sulla RAL, 50 € sul netto mensile),
   agganciati al multiplo del passo come le frecce di un input numerico, da mouse o da
   tastiera con ↑ e ↓.
