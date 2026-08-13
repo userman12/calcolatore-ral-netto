@@ -35,8 +35,6 @@ La separazione non è solo dichiarata: `test/engine.test.mjs` estrae da `index.h
 sole sezioni (A) e (B) e le esegue in Node. Se il motore acquisisse una dipendenza dal
 DOM o dalla UI, la suite smetterebbe di caricarsi.
 
-Il motore è esposto anche su `window.JetHR` per l'ispezione da console del browser.
-
 `TAX_CONFIG` è indicizzata per anno d'imposta e ne contiene uno solo, il 2026: aggiungere
 un anno è una modifica di sola configurazione, senza toccare motore né UI.
 
