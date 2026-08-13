@@ -9,7 +9,7 @@ italiano a partire dalla RAL, con esplicitazione di tutte le voci trattenute.
 
 ```bash
 open index.html          # nessun build step, nessun backend
-node --test "test/*.test.mjs"   # 52 test: motore di calcolo e input
+node --test "test/*.test.mjs"   # 56 test: motore di calcolo e input
 ```
 
 Il prototipo è un singolo file HTML. React, Tailwind e Babel sono caricati da CDN con
@@ -64,6 +64,23 @@ Costo azienda        = RAL + contributi c/azienda (INPS + INAIL) + accantonament
 = Netto annuo                                        ÷ 12, 13 o 14 mensilità
 ```
 
+## Note di lettura del grafico
+
+La scala dell'aliquota marginale si ferma al 100% e la curva è clampata sui due lati.
+L'altezza dei picchi in corrispondenza delle discontinuità non è una grandezza economica
+ma un artefatto del passo di campionamento — a passo 100 € tocca il 282%, a passo 500 €
+non supera nemmeno il 100% — e lasciarla governare l'asse schiaccerebbe in fondo al
+grafico i 997 punti su 1001 che stanno sotto il 61%. L'entità reale del salto, che
+invece è indipendente dal campionamento, è riportata in euro negli elenchi sotto il
+grafico.
+
+## Resa su mobile
+
+Verificata con Chromium sui viewport di iPhone SE, iPhone 14 e Pixel 7: nessun overflow
+orizzontale, controlli con font ≥ 16px per non innescare lo zoom automatico di iOS
+Safari, bersagli tattili da 44px, select e frecce funzionanti da touch, grafico che
+scorre nel proprio contenitore senza trascinare la pagina.
+
 ## Limiti di validità
 
 Il modello è attendibile fra **18.137 €** e **211.899 €** di RAL. Non sono limiti
@@ -91,9 +108,10 @@ dal motore anziché scritti a mano.
   si può nascondere per restare sul solo perimetro della busta paga.
 - **Curva dell'aliquota marginale effettiva** da 0 a 100.000 € di RAL, con evidenziazione
   della zona sopra il 100%.
-- **Rilevamento automatico dei cliff**: il motore scandisce la funzione diretta a passi
-  di 50 € e individua i punti in cui aumentare la RAL *riduce* il netto. Le soglie non
-  sono hardcoded nel grafico: sono derivate dalla config e convertite in RAL.
+- **Rilevamento automatico delle discontinuità**: il motore scandisce la funzione diretta
+  a passi di 50 € e individua sia i punti in cui aumentare la RAL *riduce* il netto, sia
+  quelli in cui un aumento minimo vale molto di più. Le soglie non sono hardcoded nel
+  grafico: sono derivate dalla config e convertite in RAL.
 - **Limiti di validità espliciti** sui campi, derivati dal minimale contributivo INPS e
   dalla soglia dei 200.000 € di reddito complessivo.
 - **Campi con incremento e decremento** (passo 500 € sulla RAL, 50 € sul netto mensile),
@@ -106,7 +124,12 @@ possibile il confronto con i calcolatori ufficiali, e quel confronto ormai è st
 e documentato. Nell'interfaccia sarebbe rumore fra chi usa lo strumento e il suo
 risultato.
 
-### Cliff rilevati nel modello 2026
+### Discontinuità rilevate nel modello 2026
+
+Il motore le trova da solo scandendo la funzione diretta a passi di 50 € di RAL, in
+entrambe le direzioni.
+
+**Dove aumentare la RAL riduce il netto**
 
 | RAL | Imponibile | Causa | Perdita di netto |
 |---|---|---|---|
@@ -114,6 +137,18 @@ risultato.
 | ~16.550 € | 15.000 € | somma integrativa 5,3% → 4,8% | −96 € |
 | ~25.350 € | 23.000 € | soglia addizionale comunale Milano (cliff, non franchigia) | −154 € |
 | ~38.550 € | 35.000 € | fine maggiorazione 65 € art. 13 c. 1.1 | −45 € |
+
+**Dove un aumento minimo vale molto di più**
+
+| RAL | Causa | Guadagno di netto |
+|---|---|---|
+| ~9.050 € | il trattamento integrativo diventa capiente | **+1.249 €** |
+| ~22.050 € | si perdono 960 € di somma integrativa ma se ne guadagnano 1.000 di ulteriore detrazione | +71 € |
+| ~27.550 € | inizio maggiorazione 65 € art. 13 c. 1.1 | +95 € |
+
+Il primo è il dato più sorprendente del modello: intorno ai 9.000 € di RAL, cento euro
+lordi in più ne portano oltre milleduecento netti, perché l'imposta lorda supera la
+detrazione ridotta di 75 € e sblocca i 1.200 € di trattamento integrativo.
 
 ## Output di riferimento
 
